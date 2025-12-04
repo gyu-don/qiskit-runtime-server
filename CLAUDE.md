@@ -1,0 +1,343 @@
+# CLAUDE.md
+
+This file provides guidance for AI assistants (Claude, etc.) working on this codebase.
+
+## Project Overview
+
+This repository contains a self-hosted IBM Qiskit Runtime compatible REST API server for local quantum computing simulation.
+
+## Repository Structure
+
+```
+qiskit-runtime-server/
+├── pyproject.toml              # Project metadata and dependencies (uv managed)
+├── uv.lock                     # Lock file (auto-generated, do not edit)
+├── README.md                   # User-facing documentation
+├── CLAUDE.md                   # This file - AI assistant guidance
+├── CONTRIBUTING.md             # Contribution guidelines
+├── LICENSE                     # Apache 2.0 license
+├── .pre-commit-config.yaml     # Pre-commit hooks configuration
+├── .github/
+│   └── workflows/
+│       ├── ci.yml              # CI pipeline (lint, type check, test)
+│       └── release.yml         # Release automation
+├── src/
+│   └── qiskit_runtime_server/  # Server package
+│       ├── __init__.py
+│       ├── __main__.py         # CLI entry point
+│       ├── app.py              # FastAPI app factory (create_app)
+│       ├── config.py           # Configuration management
+│       ├── models.py           # Pydantic models
+│       ├── providers/
+│       │   └── backend_metadata.py  # BackendMetadataProvider
+│       ├── executors/          # ★ Pluggable execution backends
+│       │   ├── base.py         # BaseExecutor ABC
+│       │   ├── local.py        # LocalExecutor (CPU, default)
+│       │   └── gpu.py          # GPUExecutor (future)
+│       ├── managers/
+│       │   ├── job_manager.py  # Job lifecycle (uses Executor)
+│       │   └── session_manager.py
+│       └── routes/
+│           ├── backends.py     # Backend endpoints
+│           ├── jobs.py         # Job endpoints
+│           └── sessions.py     # Session endpoints
+├── tests/
+│   ├── conftest.py             # Pytest fixtures
+│   ├── server/                 # Server tests
+│   │   ├── test_backends.py
+│   │   ├── test_jobs.py
+│   │   ├── test_sessions.py
+│   │   └── test_executors.py   # Executor tests
+│   └── integration/            # Integration tests
+│       └── test_client_server.py
+├── docs/
+│   ├── API_SPECIFICATION.md      # Complete REST API reference
+│   ├── ARCHITECTURE.md           # System architecture and implementation details
+│   ├── BACKEND_EXECUTOR_CONFIG.md # Backend topology and executor configuration options
+│   ├── DESIGN_DECISIONS.md       # Key design decisions with rationale and alternatives
+│   └── DEVELOPMENT.md            # Development setup and workflow guide
+└── examples/
+    ├── 01_list_backends.py
+    ├── 02_run_sampler.py
+    ├── 03_run_estimator.py
+    ├── 04_session_mode.py
+    └── 05_batch_mode.py
+```
+
+## Development Commands
+
+This project uses `uv` for package management. Always use `uv run` to execute scripts.
+
+### Setup
+
+```bash
+# Clone and setup
+git clone <repo-url>
+cd qiskit-runtime-server
+uv sync
+
+# Install pre-commit hooks (REQUIRED before any commits)
+uv run pre-commit install
+```
+
+### Common Commands
+
+```bash
+# Run the server
+uv run qiskit-runtime-server
+
+# Run tests
+uv run pytest
+
+# Run tests with coverage
+uv run pytest --cov=src --cov-report=term-missing
+
+# Lint and format
+uv run ruff check .
+uv run ruff format .
+
+# Type checking
+uv run mypy src
+
+# Run all pre-commit hooks manually
+uv run pre-commit run --all-files
+```
+
+### Adding Dependencies
+
+```bash
+# Add a runtime dependency
+uv add <package>
+
+# Add a development dependency
+uv add --dev <package>
+
+# NEVER edit pyproject.toml dependencies directly - use uv add
+```
+
+## Code Style and Conventions
+
+### Python Style
+
+- Follow PEP 8 with ruff as the linter/formatter
+- Use type hints for all function signatures
+- Maximum line length: 100 characters
+- Use double quotes for strings
+- Docstrings: Google style
+
+### Naming Conventions
+
+- Files: `snake_case.py`
+- Classes: `PascalCase`
+- Functions/methods: `snake_case`
+- Constants: `UPPER_SNAKE_CASE`
+- Private: prefix with `_`
+
+### Import Order
+
+```python
+# Standard library
+import json
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+# Third-party
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+# Local
+from .models import BackendConfiguration
+from .backend_provider import get_backend_provider
+```
+
+## Architecture Notes
+
+### Key Design: Separation of Metadata and Execution
+
+The architecture separates two concerns:
+
+1. **Backend Metadata** (from FakeProvider)
+   - Qubit count, coupling map, basis gates
+   - Calibration data: T1, T2, gate errors
+   - Read-only, used for transpilation and noise modeling
+
+2. **Circuit Execution** (via Executor interface)
+   - Pluggable: LocalExecutor (CPU), GPUExecutor (future)
+   - Uses metadata for noise model construction
+   - Swappable without changing API
+
+### Server Components
+
+1. **FastAPI App (`app.py`)**: Application factory `create_app(executor=...)`
+2. **BackendMetadataProvider (`providers/backend_metadata.py`)**: Wraps `FakeProviderForBackendV2`, provides backend info
+3. **Executor (`executors/`)**: Abstract interface for circuit execution
+   - `BaseExecutor`: Abstract base class with `execute_sampler()`, `execute_estimator()`
+   - `LocalExecutor`: Uses `QiskitRuntimeLocalService` (default)
+   - `GPUExecutor`: Future GPU implementation
+4. **JobManager (`managers/job_manager.py`)**: Uses injected Executor for job execution
+5. **SessionManager (`managers/session_manager.py`)**: Manages session/batch modes
+
+### Key Design Decisions
+
+For detailed design rationale and alternatives considered, see [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
+
+Key decisions:
+- **Executor abstraction**: Core interface for swappable simulation backends (CPU → GPU)
+- **uv for package management**: Fast, modern, with lock file for reproducibility
+- **In-memory storage**: Jobs and sessions stored in memory (designed for local testing)
+- **FastAPI + Pydantic v2**: Auto-docs, type validation, performance
+- **Dependency injection**: Executor injected into JobManager via `create_app()`
+- **Background threads**: Non-blocking job execution with daemon threads
+- **Strict type checking**: mypy strict mode + pre-commit hooks for code quality
+
+### Creating a Custom Executor
+
+```python
+from qiskit_runtime_server.executors.base import BaseExecutor
+
+class MyGPUExecutor(BaseExecutor):
+    @property
+    def name(self) -> str:
+        return "my-gpu"
+
+    def execute_sampler(self, pubs, options, backend_name):
+        # Get noise model from backend metadata
+        metadata = self.get_backend_metadata_provider()
+        properties = metadata.get_backend_properties(backend_name)
+        noise_model = self.build_noise_model(properties)
+
+        # Execute on GPU
+        return self.gpu_run(pubs, options, noise_model)
+
+    def execute_estimator(self, pubs, options, backend_name):
+        # Similar implementation
+        ...
+
+# Use custom executor
+from qiskit_runtime_server import create_app
+app = create_app(executor=MyGPUExecutor())
+```
+
+### Client Connection
+
+To connect to the local server, use `channel="local"` in `QiskitRuntimeService`:
+
+```python
+from qiskit_ibm_runtime import QiskitRuntimeService
+
+service = QiskitRuntimeService(
+    channel="local",  # REQUIRED for localhost
+    token="test-token",
+    url="http://localhost:8000",
+    instance="crn:v1:bluemix:public:quantum-computing:us-east:a/local::local",
+    verify=False
+)
+```
+
+## Testing Guidelines
+
+### Test Structure
+
+```python
+# tests/server/test_backends.py
+import pytest
+from fastapi.testclient import TestClient
+from qiskit_runtime_server.app import app
+
+client = TestClient(app)
+
+@pytest.fixture
+def auth_headers():
+    return {
+        "Authorization": "Bearer test-token",
+        "Service-CRN": "crn:v1:test",
+        "IBM-API-Version": "2025-05-01"
+    }
+
+class TestListBackends:
+    def test_success(self, auth_headers):
+        response = client.get("/v1/backends", headers=auth_headers)
+        assert response.status_code == 200
+        assert "devices" in response.json()
+```
+
+### Test Categories
+
+- **Unit tests**: Test individual components in isolation
+- **Integration tests**: Test client-server interaction
+- **API tests**: Test REST endpoints with TestClient
+
+## Documentation Guide
+
+This project has comprehensive documentation organized by purpose:
+
+- **[DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md)**: Explains *why* architectural choices were made, alternatives considered, and trade-offs. Read this first to understand project philosophy.
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Explains *how* the system works, with detailed component descriptions, data flow diagrams, and implementation patterns.
+- **[BACKEND_EXECUTOR_CONFIG.md](docs/BACKEND_EXECUTOR_CONFIG.md)**: Explains user-facing configuration options for backends and executors (server-level, virtual backends, custom topologies).
+- **[API_SPECIFICATION.md](docs/API_SPECIFICATION.md)**: Complete REST API reference with all endpoints, parameters, and response formats.
+- **[DEVELOPMENT.md](docs/DEVELOPMENT.md)**: Developer workflow guide (setup, testing, linting, debugging).
+
+## Common Tasks
+
+### Adding a New Endpoint
+
+1. Define Pydantic models in `models.py`
+2. Add endpoint function in `app.py`
+3. Add tests in `tests/server/`
+4. Update `docs/API_SPECIFICATION.md`
+
+### Modifying Backend Provider
+
+1. Check `FakeProviderForBackendV2` API compatibility
+2. Update `backend_provider.py`
+3. Ensure serialization works with `BackendEncoder`
+4. Test with actual fake backends
+
+
+## Troubleshooting
+
+### Common Issues
+
+**"Module not found" errors**
+```bash
+# Ensure you're using uv run
+uv run python script.py  # ✓
+python script.py          # ✗
+```
+
+**Type checking errors**
+```bash
+# Regenerate stubs if needed
+uv run mypy src --install-types
+```
+
+**Pre-commit failing**
+```bash
+# Run auto-fix
+uv run ruff format .
+uv run ruff check . --fix
+```
+
+## API Compatibility
+
+This server targets IBM Qiskit Runtime Backend API version `2025-05-01`. When updating:
+
+1. Check IBM API changelog for breaking changes
+2. Update models in `models.py`
+3. Update endpoint signatures in `app.py`
+4. Bump API version in responses
+
+## Release Process
+
+1. Update version in `pyproject.toml`
+2. Update CHANGELOG.md
+3. Create PR with changes
+4. After merge, create GitHub release
+5. GitHub Actions publishes to PyPI
+
+## Important Notes
+
+- **Do not modify** `uv.lock` directly - it's auto-generated
+- **Always run** `uv run pre-commit run --all-files` before committing
+- **Test with** actual qiskit-ibm-runtime client before releasing
+- **Keep** backward compatibility with older qiskit-ibm-runtime versions

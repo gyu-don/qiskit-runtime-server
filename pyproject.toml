@@ -33,6 +33,7 @@ dependencies = [
     "fastapi>=0.123.8",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
+    "qiskit-aer>=0.17.2",
     "qiskit-ibm-runtime>=0.43.1",
     "uvicorn[standard]>=0.38.0",
 ]
@@ -107,6 +108,7 @@ pretty = true
 module = [
     "qiskit.*",
     "qiskit_ibm_runtime.*",
+    "qiskit_aer.*",
 ]
 ignore_missing_imports = true
 

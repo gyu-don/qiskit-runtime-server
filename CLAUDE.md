@@ -125,6 +125,34 @@ uv add --dev <package>
 - Use double quotes for strings
 - Docstrings: Google style
 
+### Type Annotations
+
+**This project targets Python 3.12+, so use modern type hint syntax:**
+
+- `list[str]` instead of `List[str]`
+- `dict[str, int]` instead of `Dict[str, int]`
+- `int | None` instead of `Optional[int]`
+- `str | int` instead of `Union[str, int]`
+- `tuple[int, str]` instead of `Tuple[int, str]`
+
+Only import from `typing` for special types:
+- `Any`, `Literal`, `TypeVar`, `Protocol`, `TypeAlias`, etc.
+
+**Example:**
+```python
+# Good (Python 3.12+)
+from typing import Any
+
+def process(items: list[dict[str, Any]], key: str | None = None) -> tuple[int, str]:
+    ...
+
+# Bad (old style)
+from typing import Any, Dict, List, Optional, Tuple
+
+def process(items: List[Dict[str, Any]], key: Optional[str] = None) -> Tuple[int, str]:
+    ...
+```
+
 ### Naming Conventions
 
 - Files: `snake_case.py`
@@ -139,7 +167,7 @@ uv add --dev <package>
 # Standard library
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Third-party
 from fastapi import FastAPI, HTTPException

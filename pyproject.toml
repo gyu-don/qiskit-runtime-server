@@ -47,6 +47,11 @@ Documentation = "https://github.com/gyu-don/qiskit-runtime-server#readme"
 Repository = "https://github.com/gyu-don/qiskit-runtime-server"
 Issues = "https://github.com/gyu-don/qiskit-runtime-server/issues"
 
+[project.optional-dependencies]
+custatevec = [
+    "cuquantum-python>=25.11.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -77,6 +82,9 @@ select = [
 ignore = [
     "E501",   # line too long (handled by formatter)
     "B008",   # do not perform function calls in argument defaults
+    "RUF001", # ambiguous unicode character in string
+    "RUF002", # ambiguous unicode character in docstring
+    "RUF003", # ambiguous unicode character in comment
 ]
 
 [tool.ruff.lint.isort]
@@ -109,6 +117,7 @@ module = [
     "qiskit.*",
     "qiskit_ibm_runtime.*",
     "qiskit_aer.*",
+    "cuquantum.*",
 ]
 ignore_missing_imports = true
 

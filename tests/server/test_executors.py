@@ -137,3 +137,61 @@ class TestAerExecutor:
 
         # Should use options default_shots (2048), not executor default (1024)
         assert result[0].data.meas.num_shots == 2048
+
+
+class TestAerExecutorOptions:
+    """Tests for AerExecutor option handling."""
+
+    def test_max_parallel_threads_option(self):
+        """Test that max_parallel_threads is applied."""
+        executor = AerExecutor(max_parallel_threads=4)
+
+        circuit = QuantumCircuit(2)
+        circuit.h(0)
+        circuit.measure_all()
+
+        # Execute and verify it doesn't crash
+        result = executor.execute_sampler(
+            pubs=[(circuit, None, 100)], options={}, backend_name="fake_manila"
+        )
+
+        assert result is not None
+        assert len(result) == 1
+
+    def test_estimator_with_precision(self):
+        """Test estimator with explicit precision option."""
+        executor = AerExecutor()
+
+        circuit = QuantumCircuit(2)
+        circuit.h(0)
+        circuit.cx(0, 1)
+
+        observable = SparsePauliOp(["ZZ", "ZI"])
+
+        # Execute with precision
+        result = executor.execute_estimator(
+            pubs=[(circuit, observable)],
+            options={"default_precision": 0.01},
+            backend_name="fake_manila",
+        )
+
+        assert result is not None
+        assert len(result) == 1
+
+    def test_estimator_without_precision(self):
+        """Test estimator without precision option (default behavior)."""
+        executor = AerExecutor()
+
+        circuit = QuantumCircuit(2)
+        circuit.h(0)
+        circuit.cx(0, 1)
+
+        observable = SparsePauliOp(["II"])
+
+        # Execute without precision (should use default)
+        result = executor.execute_estimator(
+            pubs=[(circuit, observable)], options={}, backend_name="fake_manila"
+        )
+
+        assert result is not None
+        assert len(result) == 1

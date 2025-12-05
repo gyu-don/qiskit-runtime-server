@@ -317,6 +317,12 @@ wheels = [
 ]
 
 [[package]]
+name = "cuquantum-python"
+version = "25.11.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9b/37/b1856ae56e82be275ac46e071bfbb4bb5b2fd524c2994426a1879272e137/cuquantum_python-25.11.0.tar.gz", hash = "sha256:ebd3539ccdb433fd9cb28e93cf1b93da5d69d0374381b3cae0f7e9f8cec0be1e", size = 6894, upload-time = "2025-11-18T00:57:10.922Z" }
+
+[[package]]
 name = "dill"
 version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1058,6 +1064,11 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 
+[package.optional-dependencies]
+custatevec = [
+    { name = "cuquantum-python" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
@@ -1072,6 +1083,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cuquantum-python", marker = "extra == 'custatevec'", specifier = ">=25.11.0" },
     { name = "fastapi", specifier = ">=0.123.8" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
@@ -1079,6 +1091,7 @@ requires-dist = [
     { name = "qiskit-ibm-runtime", specifier = ">=0.43.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38.0" },
 ]
+provides-extras = ["custatevec"]
 
 [package.metadata.requires-dev]
 dev = [

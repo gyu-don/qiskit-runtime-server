@@ -1,11 +1,14 @@
 """Job Manager with async queue and single worker."""
 
+import json
 import logging
 import queue
 import threading
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+
+from qiskit_ibm_runtime.utils import RuntimeDecoder
 
 from ..executors.base import BaseExecutor
 from ..models import JobInfo, JobStatus
@@ -227,7 +230,7 @@ class JobManager:
 
     def _deserialize_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """
-        Deserialize job parameters.
+        Deserialize job parameters using RuntimeDecoder.
 
         Args:
             params: Serialized parameters from client
@@ -235,9 +238,17 @@ class JobManager:
         Returns:
             Deserialized parameters ready for executor
         """
-        # TODO: Implement proper deserialization
-        # For now, assume params are already deserialized
-        return params
+        # Use RuntimeDecoder to deserialize circuits and observables
+        # RuntimeDecoder is used as object_hook in json.loads
+        try:
+            # Serialize to JSON string then deserialize with RuntimeDecoder
+            json_str = json.dumps(params)
+            deserialized: dict[str, Any] = json.loads(json_str, cls=RuntimeDecoder)
+            return deserialized
+        except Exception as e:
+            logger.error("Failed to deserialize params: %s", e, exc_info=True)
+            # Fallback: return params as-is
+            return params
 
     def get_job(self, job_id: str) -> JobInfo | None:
         """

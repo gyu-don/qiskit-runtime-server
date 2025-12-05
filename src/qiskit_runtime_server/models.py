@@ -41,3 +41,41 @@ class JobInfo(BaseModel):
     # Results
     result_data: Any | None = None  # PrimitiveResult
     error_message: str | None = None
+
+
+# API Request/Response Models
+
+
+class JobCreateRequest(BaseModel):
+    """Request model for creating a job."""
+
+    program_id: str
+    backend: str  # "metadata@executor" format
+    params: dict[str, Any]
+    options: dict[str, Any] | None = None
+
+
+class JobCreateResponse(BaseModel):
+    """Response model for job creation."""
+
+    id: str
+
+
+class JobStatusResponse(BaseModel):
+    """Response model for job status."""
+
+    id: str
+    status: JobStatus
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_message: str | None = None
+
+
+class JobResultResponse(BaseModel):
+    """Response model for job result."""
+
+    id: str
+    status: JobStatus
+    results: Any | None = None
+    error_message: str | None = None

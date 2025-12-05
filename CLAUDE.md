@@ -31,16 +31,13 @@ qiskit-runtime-server/
 │       ├── providers/
 │       │   └── backend_metadata.py  # BackendMetadataProvider
 │       ├── executors/          # ★ Pluggable execution backends
+│       │   ├── __init__.py     # Exports BaseExecutor, AerExecutor, CuStateVecExecutor
 │       │   ├── base.py         # BaseExecutor ABC
-│       │   ├── local.py        # LocalExecutor (CPU, default)
-│       │   └── gpu.py          # GPUExecutor (future)
-│       ├── managers/
-│       │   ├── job_manager.py  # Job lifecycle (uses Executor)
-│       │   └── session_manager.py
-│       └── routes/
-│           ├── backends.py     # Backend endpoints
-│           ├── jobs.py         # Job endpoints
-│           └── sessions.py     # Session endpoints
+│       │   ├── aer.py          # AerExecutor (CPU, qiskit-aer)
+│       │   └── custatevec.py   # CuStateVecExecutor (GPU, cuQuantum)
+│       └── managers/
+│           ├── job_manager.py  # Job lifecycle (multi-executor routing)
+│           └── session_manager.py
 ├── tests/
 │   ├── conftest.py             # Pytest fixtures
 │   ├── server/                 # Server tests
@@ -196,46 +193,55 @@ The architecture separates two concerns:
 
 ### Server Components
 
-1. **FastAPI App (`app.py`)**: Application factory `create_app(executor=...)`
-2. **BackendMetadataProvider (`providers/backend_metadata.py`)**: Wraps `FakeProviderForBackendV2`, provides backend info
+1. **FastAPI App (`app.py`)**: Application factory `create_app(executors: dict[str, BaseExecutor])`
+2. **BackendMetadataProvider (`providers/backend_metadata.py`)**:
+   - Parses `<metadata>@<executor>` backend names
+   - Lists virtual backends (metadata × executor combinations)
+   - Wraps `FakeProviderForBackendV2` (59 fake backends)
 3. **Executor (`executors/`)**: Abstract interface for circuit execution
    - `BaseExecutor`: Abstract base class with `execute_sampler()`, `execute_estimator()`
-   - `LocalExecutor`: Uses `QiskitRuntimeLocalService` (default)
-   - `GPUExecutor`: Future GPU implementation
-4. **JobManager (`managers/job_manager.py`)**: Uses injected Executor for job execution
-5. **SessionManager (`managers/session_manager.py`)**: Manages session/batch modes
+   - `AerExecutor`: CPU execution using qiskit-aer (default)
+   - `CuStateVecExecutor`: GPU execution using cuQuantum cuStateVec
+4. **JobManager (`managers/job_manager.py`)**: Routes jobs to correct executor based on backend name
+5. **SessionManager (`managers/session_manager.py`)**: Manages session/batch modes (not yet implemented)
 
 ### Key Design Decisions
 
 For detailed design rationale and alternatives considered, see [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md).
 
 Key decisions:
-- **Executor abstraction**: Core interface for swappable simulation backends (CPU → GPU)
+- **Multi-executor abstraction**: Server hosts multiple executors simultaneously (CPU, GPU, custom)
+- **Virtual backend naming**: `<metadata>@<executor>` format (e.g., `fake_manila@aer`)
+- **Dynamic backend list**: Metadata × executors combinations (59 × N backends)
 - **uv for package management**: Fast, modern, with lock file for reproducibility
 - **In-memory storage**: Jobs and sessions stored in memory (designed for local testing)
 - **FastAPI + Pydantic v2**: Auto-docs, type validation, performance
-- **Dependency injection**: Executor injected into JobManager via `create_app()`
+- **Dependency injection**: Executors dict injected into JobManager via `create_app()`
 - **Background threads**: Non-blocking job execution with daemon threads
 - **Strict type checking**: mypy strict mode + pre-commit hooks for code quality
+- **Optional dependencies**: GPU support via `--extra custatevec` (CUDA 12.x required)
 
 ### Creating a Custom Executor
 
 ```python
 from qiskit_runtime_server.executors.base import BaseExecutor
 
-class MyGPUExecutor(BaseExecutor):
+class MyCustomExecutor(BaseExecutor):
     @property
     def name(self) -> str:
-        return "my-gpu"
+        return "custom"
 
     def execute_sampler(self, pubs, options, backend_name):
-        # Get noise model from backend metadata
-        metadata = self.get_backend_metadata_provider()
-        properties = metadata.get_backend_properties(backend_name)
-        noise_model = self.build_noise_model(properties)
+        # backend_name is the metadata name (e.g., "fake_manila")
+        # NOT the full virtual backend name
 
-        # Execute on GPU
-        return self.gpu_run(pubs, options, noise_model)
+        # Get backend metadata from FakeProvider
+        backend = self.get_backend(backend_name)
+
+        # Implement your custom execution logic
+        # Use backend.coupling_map, backend.num_qubits, etc.
+        result = self.custom_simulation(pubs, options, backend)
+        return result
 
     def execute_estimator(self, pubs, options, backend_name):
         # Similar implementation
@@ -243,7 +249,16 @@ class MyGPUExecutor(BaseExecutor):
 
 # Use custom executor
 from qiskit_runtime_server import create_app
-app = create_app(executor=MyGPUExecutor())
+
+app = create_app(executors={
+    "aer": AerExecutor(),           # CPU
+    "custom": MyCustomExecutor(),   # Your executor
+})
+
+# Creates virtual backends:
+# - fake_manila@aer
+# - fake_manila@custom
+# - ... (59 × 2 = 118 total)
 ```
 
 ### Client Connection
@@ -251,7 +266,8 @@ app = create_app(executor=MyGPUExecutor())
 To connect to the local server, use `channel="local"` in `QiskitRuntimeService`:
 
 ```python
-from qiskit_ibm_runtime import QiskitRuntimeService
+from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
+from qiskit.circuit.random import random_circuit
 
 service = QiskitRuntimeService(
     channel="local",  # REQUIRED for localhost
@@ -260,6 +276,19 @@ service = QiskitRuntimeService(
     instance="crn:v1:bluemix:public:quantum-computing:us-east:a/local::local",
     verify=False
 )
+
+# List available backends
+backends = service.backends()
+# Returns: ['fake_manila@aer', 'fake_manila@custatevec', ...]
+
+# Select backend with explicit executor
+backend = service.backend("fake_manila@aer")  # CPU executor
+# backend = service.backend("fake_manila@custatevec")  # GPU executor
+
+sampler = SamplerV2(mode=backend)
+circuit = random_circuit(5, 2)
+job = sampler.run([circuit])
+result = job.result()
 ```
 
 ## Testing Guidelines
@@ -299,11 +328,17 @@ class TestListBackends:
 
 This project has comprehensive documentation organized by purpose:
 
-- **[DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md)**: Explains *why* architectural choices were made, alternatives considered, and trade-offs. Read this first to understand project philosophy.
-- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**: Explains *how* the system works, with detailed component descriptions, data flow diagrams, and implementation patterns.
-- **[BACKEND_EXECUTOR_CONFIG.md](docs/BACKEND_EXECUTOR_CONFIG.md)**: Explains user-facing configuration options for backends and executors (server-level, virtual backends, custom topologies).
+- **[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)**: ✅ **Current implementation status** (Phase 3 complete). Read this first for overview.
+- **[DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md)**: Explains *why* architectural choices were made, alternatives considered, and trade-offs.
+- **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**: ✅ Explains *how* the system works, with detailed component descriptions, data flow diagrams, and implementation patterns.
+- **[BACKEND_EXECUTOR_CONFIG.md](docs/BACKEND_EXECUTOR_CONFIG.md)**: ✅ Explains virtual backend system and `<metadata>@<executor>` naming.
 - **[API_SPECIFICATION.md](docs/API_SPECIFICATION.md)**: Complete REST API reference with all endpoints, parameters, and response formats.
 - **[DEVELOPMENT.md](docs/DEVELOPMENT.md)**: Developer workflow guide (setup, testing, linting, debugging).
+
+**Prototype reference** (historical):
+- **[tmp/README.md](tmp/README.md)**: Prototype → production migration guide
+- **[tmp/design.md](tmp/design.md)**: Original implementation plan (Phase 3 complete)
+- **[tmp/executor-implementation.md](tmp/executor-implementation.md)**: Executor implementation spec
 
 ## Common Tasks
 

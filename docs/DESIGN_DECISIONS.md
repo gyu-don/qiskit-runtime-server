@@ -132,21 +132,69 @@ def create_app(executor: BaseExecutor = None) -> FastAPI:
 
 ---
 
-## 7. Background Threads for Job Execution
+## 7. Async Queue Architecture with Single Worker Thread
 
 ### Decision
-Execute jobs in daemon background threads.
+Use an async job queue with a single worker thread for sequential job execution.
 
 ### Rationale
-- **Non-blocking**: API returns immediately with job ID
-- **Simple implementation**: Threading is simpler than async for CPU-bound quantum simulation
-- **Resource management**: Daemon threads auto-cleanup on server shutdown
-- **Familiar pattern**: Matches how IBM Quantum jobs work (submit then poll)
+- **Non-blocking API**: API returns immediately with job ID (202 Accepted)
+- **Sequential execution**: Only one job runs at a time, preventing resource contention
+- **Simple implementation**: Single worker thread is easier to debug than parallel execution
+- **Resource management**: Prevents GPU/CPU memory conflicts
+- **Predictable behavior**: FIFO queue ensures fair scheduling and predictable execution order
+- **Future extensible**: Easy to scale to multiple workers when needed
+
+### Architecture
+```
+Client → POST /v1/jobs → JobManager.create_job()
+                              ↓
+                         Jobs added to queue.Queue (FIFO)
+                              ↓
+                         Worker thread picks jobs one at a time
+                              ↓
+                         Executor.execute_sampler/estimator()
+                              ↓
+                         Results stored in JobInfo
+```
+
+### Job Status Flow
+```
+POST /v1/jobs (202 Accepted)
+     ↓
+  QUEUED → RUNNING → COMPLETED
+     │        │           ↑
+     │        └─→ FAILED ─┘
+     └───────→ CANCELLED
+```
+
+### Implementation Details
+- **queue.Queue**: Thread-safe FIFO queue with automatic locking
+- **Single worker thread**: Daemon thread that continuously polls the queue
+- **Graceful shutdown**: `shutdown()` method stops worker thread cleanly
+- **Job cancellation**: Only QUEUED jobs can be cancelled (RUNNING jobs continue)
 
 ### Alternatives Considered
-- **Async/await**: Quantum simulation is CPU-bound, not I/O-bound
-- **Process pool**: Overkill for single-user local testing
-- **Celery/RQ**: External dependency, complexity not justified
+- **Direct threading per job**: Would allow parallel execution but risk resource contention
+- **Async/await**: Quantum simulation is CPU-bound, not I/O-bound; threading is more appropriate
+- **Process pool**: Overkill for single-user local testing, adds complexity
+- **Celery/RQ**: External dependency not justified for local development server
+- **Multiple workers immediately**: Decided to start simple with single worker, add parallelization later if needed
+
+### Future Enhancements
+- **Multiple workers**: Add worker pool for parallel execution when resource management is implemented
+- **Resource-aware scheduling**: Separate CPU and GPU queues with dedicated workers
+- **Priority queue**: Support job priorities for advanced scheduling
+
+### Why Single Worker?
+1. **Resource contention prevention**: GPU simulators need exclusive memory access
+2. **Debugging simplicity**: Predictable execution order makes debugging easier
+3. **Implementation simplicity**: No need for complex synchronization or resource locking
+4. **Good enough for local testing**: Single-user development doesn't need parallelization
+
+### Reference
+- Implementation: `src/qiskit_runtime_server/managers/job_manager.py`
+- Design document: `tmp/design-phase3-async-queue.md`
 
 ---
 
@@ -220,17 +268,96 @@ strict = true
 
 ---
 
+## 12. Executor backend_name Parameter: Frontend-Only Checking
+
+### Decision
+The `backend_name` parameter passed to executors is for **frontend metadata reference only**. Executors do **not** validate topology constraints or basis gates.
+
+### Rationale
+- **Client responsibility**: Transpilation (circuit optimization for topology) is the client's responsibility
+- **Pre-transpiled circuits**: Circuits submitted to the server are assumed to be already transpiled
+- **Executor simplicity**: Executors focus on execution, not validation
+- **Ideal simulation**: Current executors perform ideal (noiseless) simulation without topology constraints
+- **Performance**: Skipping validation reduces server overhead
+- **Flexibility**: Allows circuits to use any gates, not limited to backend basis gates
+
+### What backend_name IS Used For
+- **Metadata lookup**: Retrieve backend properties for client-side transpilation
+- **Future noise modeling**: Reserved for future implementations that may apply noise models
+- **Logging**: Track which backend metadata was requested
+- **API compatibility**: Maintain IBM Quantum API compatibility
+
+### What backend_name IS NOT Used For
+- ❌ **Topology validation**: No checking if circuit respects coupling map
+- ❌ **Basis gate validation**: No checking if gates match backend basis gates
+- ❌ **Noise modeling**: Current implementation performs ideal simulation
+- ❌ **Circuit rejection**: Executors never reject circuits based on backend_name
+
+### Implementation
+```python
+class AerExecutor(BaseExecutor):
+    def execute_sampler(self, pubs, options, backend_name: str):
+        """
+        Args:
+            backend_name: Metadata name (e.g., "fake_manila")
+                         Used for frontend metadata reference only
+                         Executors don't validate topology/basis gates
+        """
+        # backend_name accepted but not used for validation
+        # Circuits executed as-is (no topology checking)
+        backend = self.get_backend(backend_name)  # For metadata only
+        result = self.service._run(...)
+        return result
+```
+
+### Design Philosophy
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  Separation of Concerns                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  CLIENT-SIDE (qiskit-ibm-runtime):                          │
+│    • Fetch backend metadata (topology, basis gates)         │
+│    • Transpile circuits for target backend                  │
+│    • Submit pre-transpiled circuits                         │
+│                                                             │
+│  SERVER-SIDE (qiskit-runtime-server):                       │
+│    • Provide backend metadata                               │
+│    • Execute circuits as-is (no validation)                 │
+│    • Return results                                         │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Alternatives Considered
+- **Server-side validation**: Would duplicate client-side transpilation logic, adds complexity
+- **Reject invalid circuits**: Would break compatibility with pre-transpiled circuits
+- **Automatic transpilation**: Would require maintaining transpiler state, adds dependencies
+- **Noise model enforcement**: Would require noise simulation, not needed for ideal simulation
+
+### Future Considerations
+If noise modeling is implemented:
+- backend_name could be used to construct noise models from FakeProvider properties
+- Still no topology validation (client transpiles circuits first, then noise is applied)
+
+### Reference
+- Implementation: `src/qiskit_runtime_server/executors/aer.py`
+- User-selected code: Lines 20-23 in `aer.py`
+
+---
+
 ## Summary Table
 
 | Decision | Choice | Key Reason |
 |----------|--------|------------|
 | **Executor abstraction** | **Pluggable interface** | **Enable GPU replacement** |
+| **Async queue architecture** | **Single worker thread** | **Prevent resource contention** |
+| **backend_name parameter** | **Frontend-only reference** | **Client transpilation responsibility** |
 | Package manager | uv | Speed and simplicity |
 | Storage | In-memory | Designed for local testing |
 | Web framework | FastAPI | Auto docs, type validation |
 | Data models | Pydantic v2 | Performance, validation |
 | Dependency injection | Executor → JobManager | Swappable, testable |
-| Job execution | Background threads | Non-blocking, simple |
 | API versioning | Header validation | IBM compatibility |
 | Serialization | Runtime encoder/decoder | Qiskit object support |
 | Code quality | Pre-commit + strict mypy | Consistency, safety |

@@ -4,7 +4,10 @@
 
 This document describes the system architecture of the Qiskit Runtime Server, a self-hosted implementation of the IBM Qiskit Runtime Backend API.
 
-**Key Design Principle**: The execution backend is abstracted behind an **Executor interface**, allowing easy replacement of the simulation engine (e.g., from local CPU simulation to GPU-accelerated simulation).
+**Key Design Principles**:
+1. **Executor abstraction**: Multiple simulation backends (CPU via Aer, GPU via cuStateVec) are abstracted behind a unified `BaseExecutor` interface
+2. **Virtual backends**: Backend naming follows `<metadata>@<executor>` format (e.g., `fake_manila@aer`), allowing users to explicitly select topology and execution backend
+3. **Multiple executor support**: Server can host multiple executors simultaneously, with dynamic virtual backend generation (metadata × executor combinations)
 
 ## Core Concept: Separation of Metadata and Execution
 
@@ -21,10 +24,10 @@ This document describes the system architecture of the Qiskit Runtime Server, a 
 │  │   • Basis gates                 │  │   • Noise simulation         │  │
 │  │   • T1, T2 times                │  │   • Shot execution           │  │
 │  │   • Gate errors                 │  │                              │  │
-│  │   • Readout errors              │  │   REPLACEABLE:               │  │
-│  │                                 │  │   • CPU (current)            │  │
-│  │   Source: FakeProvider          │  │   • GPU (future)             │  │
-│  │   (59 fake backends)            │  │   • Custom simulator         │  │
+│  │   • Readout errors              │  │   AVAILABLE EXECUTORS:       │  │
+│  │                                 │  │   • AerExecutor (CPU)        │  │
+│  │   Source: FakeProvider          │  │   • CuStateVecExecutor (GPU) │  │
+│  │   (59 fake backends)            │  │   • Custom executors         │  │
 │  └─────────────────────────────────┘  └─────────────────────────────┘  │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -92,529 +95,325 @@ The **Executor** is the abstraction that enables pluggable simulation backends.
 
 ### Protocol Definition
 
+See [src/qiskit_runtime_server/executors/base.py](../src/qiskit_runtime_server/executors/base.py) for the complete interface definition.
+
+**Key methods**:
+- `execute_sampler(pubs, options, backend_name)`: Execute sampler primitive (measurement counts)
+- `execute_estimator(pubs, options, backend_name)`: Execute estimator primitive (expectation values)
+- `name` property: Executor implementation name (e.g., "aer", "custatevec")
+
+**Design principle**: Executors receive the metadata name only (e.g., "fake_manila"), not the full virtual backend name. This allows executors to query backend properties independently.
+
+### AerExecutor (Default - CPU) ✅
+
+**Implementation**: [src/qiskit_runtime_server/executors/aer.py](../src/qiskit_runtime_server/executors/aer.py)
+
+CPU-based executor using qiskit-aer's `QiskitRuntimeLocalService`.
+
+**Key features**:
+- Default executor (automatically used if no executors specified)
+- Uses Aer's high-performance CPU simulation
+- Supports both sampler and estimator primitives
+- Ideal simulation (no noise model applied)
+
+**Design notes**:
+- Circuits are assumed to be pre-transpiled by the client
+- No topology validation or basis gate checking
+- Backend name used for metadata reference only
+
+**Usage**:
 ```python
-from typing import Protocol, Any, Dict, List
-from abc import abstractmethod
+from qiskit_runtime_server import create_app
 
-class ExecutorProtocol(Protocol):
-    """
-    Abstract interface for quantum circuit execution.
-
-    Implementations can use different simulation backends:
-    - LocalExecutor: Uses QiskitRuntimeLocalService (CPU)
-    - GPUExecutor: Uses GPU-accelerated simulator (future)
-    - CustomExecutor: User-defined execution backend
-    """
-
-    @abstractmethod
-    def execute_sampler(
-        self,
-        pubs: List[Any],
-        options: Dict[str, Any],
-        backend_name: str,
-    ) -> "PrimitiveResult":
-        """
-        Execute sampler primitive.
-
-        Args:
-            pubs: Primitive Unified Blocks - (circuit, params, shots)
-            options: Execution options
-            backend_name: Target backend (for noise model/topology)
-
-        Returns:
-            SamplerResult with measurement counts
-        """
-        ...
-
-    @abstractmethod
-    def execute_estimator(
-        self,
-        pubs: List[Any],
-        options: Dict[str, Any],
-        backend_name: str,
-    ) -> "PrimitiveResult":
-        """
-        Execute estimator primitive.
-
-        Args:
-            pubs: Primitive Unified Blocks - (circuit, observable, params)
-            options: Execution options
-            backend_name: Target backend (for noise model)
-
-        Returns:
-            EstimatorResult with expectation values
-        """
-        ...
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Executor implementation name."""
-        ...
+# Default (Aer is used automatically)
+app = create_app()
 ```
 
-### LocalExecutor (Current Default)
+### CuStateVecExecutor (GPU) ✅
 
-```python
-class LocalExecutor(BaseExecutor):
-    """
-    CPU-based executor using QiskitRuntimeLocalService.
+**Implementation**: [src/qiskit_runtime_server/executors/custatevec.py](../src/qiskit_runtime_server/executors/custatevec.py)
 
-    This is the default implementation that uses Qiskit's
-    built-in local simulation.
-    """
+GPU-accelerated executor using NVIDIA cuQuantum cuStateVec.
 
-    def __init__(self):
-        from qiskit_ibm_runtime.fake_provider.local_service import (
-            QiskitRuntimeLocalService
-        )
-        self.service = QiskitRuntimeLocalService()
-        self.metadata_provider = get_backend_metadata_provider()
+**Requirements**:
+- CUDA 12.x
+- Install with: `uv sync --extra custatevec`
 
-    @property
-    def name(self) -> str:
-        return "local"
+**Key features**:
+- GPU-accelerated quantum simulation
+- Supports both sampler and estimator primitives
+- Validates cuquantum installation at initialization
 
-    def execute_sampler(
-        self,
-        pubs: List[Any],
-        options: Dict[str, Any],
-        backend_name: str,
-    ) -> PrimitiveResult:
-        backend = self.metadata_provider.get_backend(backend_name)
+**Current status**: Uses `QiskitRuntimeLocalService` as foundation. Direct cuStateVec integration planned for future optimization.
 
-        return self.service._run(
-            program_id="sampler",
-            inputs={"pubs": pubs},
-            options={"backend": backend, **options}
-        )
-
-    def execute_estimator(
-        self,
-        pubs: List[Any],
-        options: Dict[str, Any],
-        backend_name: str,
-    ) -> PrimitiveResult:
-        backend = self.metadata_provider.get_backend(backend_name)
-
-        return self.service._run(
-            program_id="estimator",
-            inputs={"pubs": pubs},
-            options={"backend": backend, **options}
-        )
+**Usage**:
+```bash
+# Install with GPU support
+uv sync --extra custatevec
 ```
 
-### GPUExecutor (Future)
-
 ```python
-class GPUExecutor(BaseExecutor):
-    """
-    GPU-accelerated executor.
+from qiskit_runtime_server import create_app
+from qiskit_runtime_server.executors import AerExecutor, CuStateVecExecutor
 
-    Uses backend metadata from FakeProvider for:
-    - Coupling map (connectivity constraints for transpilation)
-    - Noise model (T1, T2, gate errors for realistic simulation)
-    - Basis gates
-
-    Executes circuits on GPU simulator.
-    """
-
-    def __init__(
-        self,
-        device: int = 0,
-        use_noise_model: bool = True,
-    ):
-        self.device = device
-        self.use_noise_model = use_noise_model
-        self.metadata_provider = get_backend_metadata_provider()
-        self._init_gpu()
-
-    @property
-    def name(self) -> str:
-        return "gpu"
-
-    def _init_gpu(self):
-        """Initialize GPU resources."""
-        # TODO: Initialize your GPU simulator here
-        pass
-
-    def _build_noise_model(self, backend_name: str):
-        """
-        Build noise model from FakeBackend properties.
-
-        Extracts T1, T2, gate errors, readout errors from
-        the fake backend's calibration data.
-        """
-        properties = self.metadata_provider.get_backend_properties(backend_name)
-        if properties is None:
-            return None
-
-        # Convert properties to noise model format
-        # This depends on your GPU simulator's noise model API
-        return self._convert_to_gpu_noise_model(properties)
-
-    def execute_sampler(
-        self,
-        pubs: List[Any],
-        options: Dict[str, Any],
-        backend_name: str,
-    ) -> PrimitiveResult:
-        # Get noise model from backend metadata
-        noise_model = None
-        if self.use_noise_model:
-            noise_model = self._build_noise_model(backend_name)
-
-        # Execute on GPU
-        # TODO: Replace with actual GPU simulator call
-        results = self._gpu_run_sampler(pubs, options, noise_model)
-
-        return self._format_result(results)
-
-    def _gpu_run_sampler(self, pubs, options, noise_model):
-        """
-        Core GPU execution method.
-
-        THIS IS THE METHOD TO IMPLEMENT for GPU simulation.
-        """
-        raise NotImplementedError("GPU executor not yet implemented")
+# Multi-executor setup
+app = create_app(executors={
+    "aer": AerExecutor(),                # CPU
+    "custatevec": CuStateVecExecutor(),  # GPU
+})
+# Creates: 59 × 2 = 118 virtual backends
 ```
 
 ## Component Details
 
 ### 1. BackendMetadataProvider
 
-**Purpose**: Provide backend metadata (NOT execution)
+**Implementation**: [src/qiskit_runtime_server/providers/backend_metadata.py](../src/qiskit_runtime_server/providers/backend_metadata.py)
 
+**Purpose**: Provide virtual backend metadata with executor-aware naming
+
+**Key features**:
+- Parses `<metadata>@<executor>` backend names
+- Lists all virtual backends (metadata × executor combinations)
+- Validates executor availability
+- Read-only (does not execute circuits)
+
+**Core methods**:
+- `parse_backend_name(backend_name)`: Parse virtual backend name into (metadata, executor) tuple
+- `list_backends()`: Generate all metadata × executor combinations
+- `get_configuration(backend_name)`: Get backend configuration
+- `get_properties(backend_name)`: Get backend properties (T1/T2, gate errors, etc.)
+
+**Example**:
 ```python
-class BackendMetadataProvider:
-    """
-    Provides backend metadata from FakeProviderForBackendV2.
+provider = BackendMetadataProvider(["aer", "custatevec"])
 
-    This component is READ-ONLY - it does not execute circuits.
-    It provides:
-    - Backend list with basic info
-    - Configuration (topology, gates, constraints)
-    - Properties (calibration data: T1, T2, errors)
-    - Status information
+# Parse backend name
+metadata, executor = provider.parse_backend_name("fake_manila@aer")
+# Returns: ("fake_manila", "aer")
 
-    The Executor uses this metadata for:
-    - Noise model construction
-    - Topology-aware transpilation
-    """
-
-    def __init__(self):
-        from qiskit_ibm_runtime.fake_provider import FakeProviderForBackendV2
-        self._provider = FakeProviderForBackendV2()
-        self._backends_cache = None
-
-    def list_backends(self) -> List[BackendInfo]:
-        """List all available backends."""
-        ...
-
-    def get_backend(self, name: str) -> FakeBackendV2:
-        """Get backend instance (for LocalExecutor)."""
-        return self._provider.backend(name)
-
-    def get_backend_configuration(self, name: str) -> Dict[str, Any]:
-        """Get backend configuration (topology, gates, etc.)."""
-        ...
-
-    def get_backend_properties(self, name: str) -> BackendProperties:
-        """Get calibration properties (T1, T2, errors)."""
-        ...
+# List all virtual backends
+response = provider.list_backends()
+# Returns: 59 × 2 = 118 virtual backends
 ```
 
 ### 2. JobManager
 
-**Purpose**: Job lifecycle management with pluggable Executor
+**Implementation**: [src/qiskit_runtime_server/managers/job_manager.py](../src/qiskit_runtime_server/managers/job_manager.py)
 
-```python
-class JobManager:
-    """
-    Manages job lifecycle.
+**Purpose**: Job lifecycle management with async queueing and multi-executor routing
 
-    Key change from original: Uses injected Executor instead of
-    hardcoded QiskitRuntimeLocalService.
-    """
+**Architecture**: Async queue with single worker thread (FIFO execution)
 
-    def __init__(self, executor: BaseExecutor):
-        self.executor = executor  # ← Injected, swappable
-        self.jobs: Dict[str, JobInfo] = {}
-        self._lock = threading.Lock()
-
-    def create_job(
-        self,
-        program_id: str,
-        backend_name: str,
-        params: Dict[str, Any],
-        options: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        job_id = f"job-{uuid.uuid4()}"
-
-        # Start background execution
-        thread = threading.Thread(
-            target=self._execute_job,
-            args=(job_id, program_id, backend_name, params, options or {})
-        )
-        thread.start()
-
-        return job_id
-
-    def _execute_job(self, job_id, program_id, backend_name, params, options):
-        """Execute job using the configured Executor."""
-        try:
-            if program_id == "sampler":
-                result = self.executor.execute_sampler(
-                    pubs=params.get("pubs", []),
-                    options=options,
-                    backend_name=backend_name,
-                )
-            elif program_id == "estimator":
-                result = self.executor.execute_estimator(
-                    pubs=params.get("pubs", []),
-                    options=options,
-                    backend_name=backend_name,
-                )
-
-            self._set_job_completed(job_id, result)
-        except Exception as e:
-            self._set_job_failed(job_id, str(e))
 ```
+┌─────────────────────────────────────────────────────────────┐
+│                      JobManager                              │
+│                                                              │
+│  Job Queue (FIFO) → Worker Thread → Executor Selection      │
+│  [QUEUED jobs]       [RUNNING job]   [Route to executor]    │
+│                                       ↓                      │
+│                                    Result Storage            │
+│                                    [COMPLETED/FAILED]        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Job Status Transitions**:
+```
+POST /v1/jobs → QUEUED → RUNNING → COMPLETED/FAILED
+                   ↓
+                CANCELLED (only if not RUNNING)
+```
+
+**Key features**:
+- FIFO job queue with automatic executor routing
+- Single worker thread (prevents resource contention)
+- Thread-safe job state management
+- Non-blocking job submission (returns job ID immediately)
+- Backend name parsing: `fake_manila@aer` → routes to `executors["aer"]`
+
+**Core methods**:
+- `create_job(program_id, backend_name, params, options)`: Add job to queue (non-blocking)
+- `get_job(job_id)`: Get job status and result
+- `cancel_job(job_id)`: Cancel queued job
+- `shutdown()`: Gracefully shutdown worker thread
+
+**Design rationale**:
+- **Single worker**: Prevents GPU/CPU memory contention, predictable execution order
+- **Daemon thread**: Automatic cleanup on server shutdown
+- **FIFO queue**: Fair scheduling, simple debugging
 
 ### 3. Application Factory
 
-**Purpose**: Create app with configurable Executor
+**Implementation**: [src/qiskit_runtime_server/app.py](../src/qiskit_runtime_server/app.py)
 
+**Function**: `create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI`
+
+**Purpose**: Create FastAPI application with configurable executors
+
+**Parameters**:
+- `executors`: Mapping of executor name to instance (defaults to `{"aer": AerExecutor()}`)
+
+**Examples**:
 ```python
-def create_app(executor: Optional[BaseExecutor] = None) -> FastAPI:
-    """
-    Create FastAPI application with configurable executor.
+# Default (Aer only)
+app = create_app()
+# Creates: 59 virtual backends (fake_manila@aer, ...)
 
-    Args:
-        executor: Executor implementation. Defaults to LocalExecutor.
+# Multiple executors
+app = create_app(executors={
+    "aer": AerExecutor(),
+    "custatevec": CuStateVecExecutor(),
+})
+# Creates: 59 × 2 = 118 virtual backends
 
-    Returns:
-        Configured FastAPI application
-
-    Examples:
-        # Default (CPU)
-        app = create_app()
-
-        # With GPU executor
-        app = create_app(executor=GPUExecutor(device=0))
-
-        # With custom executor
-        app = create_app(executor=MyCustomExecutor())
-    """
-    if executor is None:
-        executor = LocalExecutor()
-
-    # Create managers with executor
-    job_manager = JobManager(executor=executor)
-    session_manager = SessionManager()
-    metadata_provider = BackendMetadataProvider()
-
-    # Create FastAPI app
-    app = FastAPI(title="Qiskit Runtime Server")
-
-    # Register routes with dependencies
-    register_backend_routes(app, metadata_provider)
-    register_job_routes(app, job_manager)
-    register_session_routes(app, session_manager)
-
-    return app
+# Custom executor
+app = create_app(executors={
+    "custom": MyCustomExecutor(),
+})
 ```
+
+**What it does**:
+1. Initializes executors (defaults to Aer if none provided)
+2. Creates JobManager with executor routing
+3. Creates BackendMetadataProvider with virtual backend generation
+4. Registers REST API endpoints
+5. Returns configured FastAPI app
 
 ## Data Flow
 
-### Job Execution with Executor Abstraction
+### Job Execution with Multi-Executor Routing
 
 ```
-Client                    Server                         Executor
-  │                         │                               │
-  │  POST /v1/jobs          │                               │
-  │  {program_id: sampler,  │                               │
-  │   backend: fake_manila} │                               │
-  │────────────────────────►│                               │
-  │                         │                               │
-  │                         │  1. JobManager.create_job()   │
-  │                         │                               │
-  │                         │  2. executor.execute_sampler( │
-  │                         │       pubs,                   │
-  │                         │       options,                │
-  │                         │       backend_name            │
-  │                         │     )                         │
-  │                         │──────────────────────────────►│
-  │                         │                               │
-  │                         │     LocalExecutor:            │
-  │                         │       Uses QiskitRuntime      │
-  │                         │       LocalService            │
-  │                         │                               │
-  │                         │     GPUExecutor (future):     │
-  │                         │       Gets noise model from   │
-  │                         │       BackendMetadataProvider │
-  │                         │       Executes on GPU         │
-  │                         │                               │
-  │                         │  PrimitiveResult              │
-  │                         │◄──────────────────────────────│
-  │                         │                               │
-  │  JobResponse            │                               │
-  │◄────────────────────────│                               │
+Client                         Server                      Executor
+  │                              │                            │
+  │  POST /v1/jobs               │                            │
+  │  backend: "fake_manila@aer"  │                            │
+  │─────────────────────────────►│                            │
+  │                              │                            │
+  │                              │  1. Parse backend name:    │
+  │                              │     "fake_manila@aer" →    │
+  │                              │     metadata="fake_manila" │
+  │                              │     executor="aer"         │
+  │                              │                            │
+  │                              │  2. Route to executor      │
+  │                              │     executors["aer"]       │
+  │                              │     .execute_sampler(      │
+  │                              │       pubs,                │
+  │                              │       options,             │
+  │                              │       "fake_manila")       │
+  │                              │───────────────────────────►│
+  │                              │                            │
+  │                              │  3. Execute & return       │
+  │                              │◄───────────────────────────│
+  │                              │                            │
+  │  JobResponse {id: "job-123"} │                            │
+  │◄─────────────────────────────│                            │
 ```
 
-### How GPU Executor Uses Backend Metadata
+**Key Points**:
+- Client specifies **full virtual backend name**: `fake_manila@aer`
+- Server parses to extract **metadata** (`fake_manila`) and **executor** (`aer`)
+- JobManager routes to the correct executor: `executors["aer"]`
+- Executor receives **metadata name only** (not `@executor` suffix)
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     GPU Executor Workflow                                │
-│                                                                         │
-│   1. Job arrives: {backend: "fake_manila", pubs: [...]}                 │
-│                                                                         │
-│   2. GPUExecutor queries BackendMetadataProvider:                       │
-│      ┌─────────────────────────────────────────────────────────────┐   │
-│      │  properties = metadata_provider.get_properties("fake_manila") │   │
-│      │                                                               │   │
-│      │  Returns:                                                     │   │
-│      │  {                                                            │   │
-│      │    qubits: [                                                  │   │
-│      │      [{name: "T1", value: 125.3, unit: "us"}, ...],          │   │
-│      │      ...                                                      │   │
-│      │    ],                                                         │   │
-│      │    gates: [                                                   │   │
-│      │      {gate: "cx", qubits: [0,1], error: 0.0043}, ...         │   │
-│      │    ]                                                          │   │
-│      │  }                                                            │   │
-│      └─────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-│   3. GPUExecutor builds noise model from properties                     │
-│                                                                         │
-│   4. GPUExecutor runs circuit on GPU with noise model                   │
-│                                                                         │
-│   5. Returns PrimitiveResult                                            │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+### How Executors Use Backend Metadata
+
+**Workflow**:
+1. Job arrives with metadata name (e.g., `"fake_manila"`)
+2. Executor calls `self.get_backend(backend_name)` to retrieve metadata from FakeProvider
+3. Backend metadata includes:
+   - Qubit count, coupling map, basis gates
+   - T1/T2 times, gate errors, readout errors
+4. Executor optionally builds noise model from properties
+5. Executor runs circuit and returns PrimitiveResult
+
+**Note**: Current executors use ideal simulation (no noise model). Noise modeling can be added in future executor implementations.
 
 ## Configuration
 
-### Environment Variables
+### Installation Options
 
 ```bash
-# Select executor implementation
-QRS_EXECUTOR=local          # Default: QiskitRuntimeLocalService
-QRS_EXECUTOR=gpu            # Future: GPU simulator
+# CPU only (default)
+uv sync
 
-# GPU-specific options
-QRS_GPU_DEVICE=0            # GPU device ID
-QRS_GPU_MEMORY_LIMIT=8G     # Memory limit
-QRS_GPU_USE_NOISE=true      # Enable noise modeling
-
-# Server options
-QRS_HOST=0.0.0.0
-QRS_PORT=8000
-QRS_LOG_LEVEL=INFO
+# With GPU support (requires CUDA 12.x)
+uv sync --extra custatevec
 ```
 
-### Programmatic Configuration
+### Application Configuration
 
-```python
-# main.py or __main__.py
+See [Application Factory](#3-application-factory) section for `create_app()` examples.
 
-from qiskit_runtime_server import create_app
-from qiskit_runtime_server.executors import LocalExecutor, GPUExecutor
+**Summary**:
+- Default: Aer executor only (59 virtual backends)
+- Multi-executor: Pass `executors` dict to `create_app()`
+- Custom executors: Extend `BaseExecutor` class
 
-# Option 1: Environment-based (default)
-app = create_app()
+### Environment Variables
 
-# Option 2: Explicit local executor
-app = create_app(executor=LocalExecutor())
+Not yet implemented. Use programmatic configuration via `create_app(executors={...})`.
 
-# Option 3: GPU executor
-app = create_app(executor=GPUExecutor(
-    device=0,
-    use_noise_model=True,
-))
-
-# Option 4: Custom executor
-class MySimulator(BaseExecutor):
-    def execute_sampler(self, pubs, options, backend_name):
-        # Your implementation here
-        pass
-
-app = create_app(executor=MySimulator())
-```
-
-## Project Structure
+## Project Structure (Current Implementation) ✅
 
 ```
 src/qiskit_runtime_server/
-├── __init__.py
-├── __main__.py                 # Entry point
-├── app.py                      # create_app() factory
-├── config.py                   # Configuration
+├── __init__.py                 # Exports: create_app
+├── app.py                      # create_app() factory (multi-executor)
 ├── models.py                   # Pydantic models
 │
 ├── providers/
 │   ├── __init__.py
-│   └── backend_metadata.py     # BackendMetadataProvider
+│   └── backend_metadata.py     # BackendMetadataProvider (virtual backends)
 │
-├── executors/                  # ★ Executor abstraction
-│   ├── __init__.py             # Exports: BaseExecutor, LocalExecutor
+├── executors/                  # ★ Multi-executor abstraction
+│   ├── __init__.py             # Exports: BaseExecutor, AerExecutor, CuStateVecExecutor
 │   ├── base.py                 # BaseExecutor ABC
-│   ├── local.py                # LocalExecutor (CPU, default)
-│   └── gpu.py                  # GPUExecutor (future, placeholder)
+│   ├── aer.py                  # AerExecutor (CPU, default)
+│   └── custatevec.py           # CuStateVecExecutor (GPU)
 │
-├── managers/
-│   ├── __init__.py
-│   ├── job_manager.py          # JobManager (uses Executor)
-│   └── session_manager.py      # SessionManager
-│
-├── routes/
-│   ├── __init__.py
-│   ├── backends.py             # Backend endpoints
-│   ├── jobs.py                 # Job endpoints
-│   └── sessions.py             # Session endpoints
-│
-└── utils/
+└── managers/
     ├── __init__.py
-    └── serialization.py        # RuntimeEncoder/Decoder
+    ├── job_manager.py          # JobManager (multi-executor routing)
+    └── session_manager.py      # SessionManager (stub)
 ```
 
-## Migration Path to GPU
+**Not yet implemented**:
+- `__main__.py` - CLI entry point (optional)
+- `config.py` - Configuration management (optional)
+- `routes/` - Route separation (optional)
 
-### Phase 1: Current State
-- `LocalExecutor` using `QiskitRuntimeLocalService`
-- All execution happens on CPU
-- Full API compatibility
+## Implementation Status
 
-### Phase 2: Implement GPUExecutor
-1. Create `GPUExecutor` class implementing `BaseExecutor`
-2. Implement `_gpu_run_sampler()` and `_gpu_run_estimator()`
-3. Add noise model conversion from `BackendProperties`
-4. Test with same API, different executor
+**Current**: Production-ready multi-executor system (Phase 1-3 complete)
 
-### Phase 3: Configuration
-1. Add `QRS_EXECUTOR=gpu` environment variable support
-2. Document GPU setup requirements
-3. Add GPU-specific configuration options
+**Completed features**:
+- Multi-executor abstraction (`BaseExecutor`, `AerExecutor`, `CuStateVecExecutor`)
+- Virtual backend naming: `<metadata>@<executor>`
+- Dynamic backend list generation (59 × N executors)
+- Automatic executor routing in JobManager
 
-### Phase 4: Optimization
-1. Add `HybridExecutor` for automatic CPU/GPU routing
-2. Batch multiple circuits for GPU efficiency
-3. Memory management for large circuits
+**Future optimizations**:
+- Direct cuStateVec integration (replace QiskitRuntimeLocalService fallback)
+- HybridExecutor (automatic CPU/GPU routing based on circuit size)
+- Environment-based configuration
+- CLI entry point
 
 ## Summary
 
-| Component | Responsibility | Replaceable? |
-|-----------|----------------|--------------|
-| BackendMetadataProvider | Backend info (topology, noise params) | No (uses FakeProvider) |
-| **Executor** | **Circuit execution** | **Yes (core abstraction)** |
-| JobManager | Job lifecycle | No (uses Executor) |
-| SessionManager | Session/batch management | No |
+### Core Design Principles
 
-The **Executor interface** is the key abstraction that enables:
-- Current: CPU-based simulation via QiskitRuntimeLocalService
-- Future: GPU-accelerated simulation
-- Extensible: Any custom simulation backend
+1. **Separation of Concerns**:
+   - **Metadata** (topology, noise) → FakeProvider (read-only, 59 backends)
+   - **Execution** (simulation) → Executor interface (swappable: CPU/GPU/custom)
+   - **Routing** → JobManager parses `<metadata>@<executor>` and routes to executor
 
-Backend metadata (coupling maps, T1/T2 times, gate errors) comes from FakeProvider and is reused across all Executor implementations for consistent noise modeling.
+2. **Multi-Executor System**: Single server hosts multiple executors
+   - Virtual backends: 59 metadata × N executors
+   - Client selects executor via backend name: `fake_manila@aer` (CPU) or `fake_manila@custatevec` (GPU)
+   - No client-side modifications required
+
+3. **Flexibility**: Mix-and-match any topology with any executor
+   - Add new executors by extending `BaseExecutor`
+   - Dynamic backend list generation
+   - Explicit executor selection without API changes

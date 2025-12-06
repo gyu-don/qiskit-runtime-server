@@ -84,10 +84,10 @@ cp app.example.py app.py
 
 ```bash
 # Run the server
-uvicorn app:app --host 0.0.0.0 --port 8000
+uv run uvicorn app:app --host 0.0.0.0 --port 8000
 
 # Or with auto-reload for development
-uvicorn app:app --reload
+uv run uvicorn app:app --reload
 
 # Run tests
 uv run pytest

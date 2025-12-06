@@ -32,8 +32,9 @@ git clone https://github.com/gyu-don/qiskit-runtime-server.git
 cd qiskit-runtime-server
 uv sync
 
-# Run the server
-uv run qiskit-runtime-server
+# Create and run the server
+cp app.example.py app.py
+uvicorn app:app --host 0.0.0.0 --port 8000
 # Server runs at http://localhost:8000
 ```
 
@@ -84,38 +85,74 @@ result = job.result()
 | PATCH | `/v1/sessions/{id}` | Update session |
 | DELETE | `/v1/sessions/{id}/close` | Cancel session |
 
-## Multi-Executor Configuration
+## Server Configuration
+
+### Quick Start
+
+```bash
+# Create application file
+cp app.example.py app.py
+
+# Run server
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
 
 ### Default Setup (CPU only)
 
-```bash
-# Server startup with default Aer executor
-uv run qiskit-runtime-server
+```python
+# app.py
+from qiskit_runtime_server import create_app
+from qiskit_runtime_server.executors import AerExecutor
 
-# Available backends: fake_manila@aer, fake_quantum_sim@aer, ... (59 total)
+executors = {
+    "aer": AerExecutor(shots=1024),
+}
+
+app = create_app(executors=executors)
 ```
+
+Available backends: `fake_manila@aer`, `fake_quantum_sim@aer`, ... (59 total)
 
 ### Multi-Executor Setup (CPU + GPU)
 
 ```bash
-# Install with GPU support
+# Install GPU support
 uv sync --extra custatevec  # Requires CUDA 12.x
 ```
 
 ```python
-# Server configuration
+# app.py
 from qiskit_runtime_server import create_app
 from qiskit_runtime_server.executors import AerExecutor, CuStateVecExecutor
+import os
 
-app = create_app(executors={
-    "aer": AerExecutor(),                # CPU
-    "custatevec": CuStateVecExecutor(),  # GPU
-})
+executors = {
+    "aer": AerExecutor(shots=1024),
+}
+
+# Add GPU executor if available
+if os.path.exists("/dev/nvidia0"):
+    executors["custatevec"] = CuStateVecExecutor(device_id=0, shots=2048)
+
+app = create_app(executors=executors)
 
 # Creates: 59 × 2 = 118 virtual backends
 # - fake_manila@aer (CPU)
 # - fake_manila@custatevec (GPU)
 # - ... (all combinations)
+```
+
+### Custom Executors
+
+```python
+# app.py
+from qiskit_runtime_server import create_app
+from my_custom_executor import MyCustomExecutor
+
+app = create_app(executors={
+    "aer": AerExecutor(),
+    "custom": MyCustomExecutor(param1="value"),
+})
 ```
 
 ```python

@@ -379,9 +379,7 @@ src/qiskit_runtime_server/
 ```
 
 **Not yet implemented**:
-- `__main__.py` - CLI entry point (optional)
-- `config.py` - Configuration management (optional)
-- `routes/` - Route separation (optional)
+- `routes/` - Route separation (optional, low priority)
 
 ## Implementation Status
 

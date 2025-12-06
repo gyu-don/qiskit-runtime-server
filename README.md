@@ -34,7 +34,7 @@ uv sync
 
 # Create and run the server
 cp app.example.py app.py
-uvicorn app:app --host 0.0.0.0 --port 8000
+uv run uvicorn app:app --host 0.0.0.0 --port 8000
 # Server runs at http://localhost:8000
 ```
 
@@ -94,7 +94,7 @@ result = job.result()
 cp app.example.py app.py
 
 # Run server
-uvicorn app:app --host 0.0.0.0 --port 8000
+uv run uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
 ### Default Setup (CPU only)

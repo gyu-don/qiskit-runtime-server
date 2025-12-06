@@ -6,20 +6,26 @@ To use this configuration:
 Then edit app.py to customize executor settings.
 
 To run the server:
-    uvicorn app:app --host 0.0.0.0 --port 8000
+    uv run uvicorn app:app --host 0.0.0.0 --port 8000
 
 For development with auto-reload:
-    uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+    uv run uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 """
 
 from qiskit_runtime_server import create_app
 from qiskit_runtime_server.executors import AerExecutor
 
+try:
+    from qiskit_runtime_server.executors import CuStateVecExecutor
+
+    CUSTATEVEC_AVAILABLE = True
+except ImportError:
+    CUSTATEVEC_AVAILABLE = False
+
 # ==============================================================================
 # Executor Configuration
 # ==============================================================================
 
-# Default: CPU executor (Aer)
 executors = {
     "aer": AerExecutor(
         shots=1024,
@@ -28,24 +34,12 @@ executors = {
     ),
 }
 
-# ==============================================================================
-# Optional: GPU Executor (cuStateVec)
-# ==============================================================================
-
-# Uncomment the following to enable GPU executor if you have NVIDIA GPU with CUDA:
-#
-# try:
-#     from qiskit_runtime_server.executors import CuStateVecExecutor
-#
-#     # Auto-detect GPU
-#     if os.path.exists("/dev/nvidia0"):
-#         executors["custatevec"] = CuStateVecExecutor(
-#             device_id=0,  # GPU device ID
-#             shots=2048,
-#             seed_simulator=None,
-#         )
-# except ImportError:
-#     pass  # cuStateVec not installed
+if CUSTATEVEC_AVAILABLE:
+    executors["custatevec"] = CuStateVecExecutor(
+        device_id=0,  # GPU device ID
+        shots=2048,
+        seed_simulator=None,
+    )
 
 # ==============================================================================
 # Optional: Custom Executor
@@ -84,4 +78,4 @@ executors = {
 app = create_app(executors=executors)
 
 # The 'app' object is used by uvicorn:
-#   uvicorn app:app --host 0.0.0.0 --port 8000
+#   uv run uvicorn app:app --host 0.0.0.0 --port 8000

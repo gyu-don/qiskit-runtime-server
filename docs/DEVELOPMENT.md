@@ -52,10 +52,10 @@ Pre-commit hooks will run automatically on `git commit`, checking:
 cp app.example.py app.py
 
 # Development mode with auto-reload
-uvicorn app:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn app:app --reload --host 0.0.0.0 --port 8000
 
 # Production mode
-uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4
+uv run uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 Server will be available at:
@@ -366,7 +366,7 @@ from qiskit_runtime_server import create_app
 Then run the server:
 
 ```bash
-uvicorn app:app --log-level debug
+uv run uvicorn app:app --log-level debug
 ```
 
 ### Using Python Debugger

@@ -268,7 +268,7 @@ These are **optional enhancements** and not required for production use:
 2. **CLI Entry Point** (`__main__.py`)
    - Command-line server launcher
    - Environment variable configuration
-   - Currently can use `uvicorn` directly
+   - Currently can use `uv run uvicorn` directly
 
 3. **Configuration Management** (`config.py`)
    - Centralized config with pydantic-settings

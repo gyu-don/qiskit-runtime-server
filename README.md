@@ -1,20 +1,23 @@
 # Qiskit Runtime Server
 
-A self-hosted IBM Qiskit Runtime compatible REST API server using Qiskit's fake backends for local quantum computing simulation and testing.
+A self-hosted IBM Qiskit Runtime compatible REST API server with multi-executor support (CPU/GPU) for local quantum computing simulation and testing.
+
+**Current Status**: GPU support is not yet.
 
 ## Overview
 
-This project provides a FastAPI-based REST API server that implements the IBM Qiskit Runtime Backend API specification, enabling local simulation using Qiskit's built-in fake backends.
+This project provides a FastAPI-based REST API server that implements the IBM Qiskit Runtime Backend API specification, enabling local simulation using Qiskit's fake backends with pluggable execution backends (CPU/GPU).
 
 ## Features
 
-- Full REST API compatibility with IBM Qiskit Runtime Backend API (v2025-05-01)
-- 59 fake quantum backends from `qiskit_ibm_runtime.fake_provider`
-- Support for Sampler and Estimator primitives
-- Session mode (dedicated/batch) for job grouping
-- Job management with async execution
-- Swagger UI and ReDoc documentation
-- Works with standard qiskit-ibm-runtime client using `channel="local"`
+- **Multi-Executor Support**: Run CPU (Aer) and GPU (cuStateVec) executors simultaneously
+- **Virtual Backends**: 59 fake backends × N executors (e.g., `fake_manila@aer`, `fake_manila@custatevec`)
+- **Full API Compatibility**: IBM Qiskit Runtime Backend API (v2025-05-01)
+- **Sampler & Estimator**: Support for both V2 primitives
+- **Session Mode**: Dedicated/batch job grouping
+- **Async Job Execution**: Non-blocking job submission with FIFO queue
+- **Auto-Documentation**: Swagger UI and ReDoc
+- **Zero Client Changes**: Works with standard `qiskit-ibm-runtime` client using `channel="local"`
 
 ## Quick Start
 
@@ -37,20 +40,30 @@ uv run qiskit-runtime-server
 ### Client
 
 ```python
-from qiskit_ibm_runtime import QiskitRuntimeService
+from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
+from qiskit.circuit.random import random_circuit
 
 # Connect to local server
 service = QiskitRuntimeService(
-    channel="local",  # SET THIS!!!!!!!!!
+    channel="local",  # REQUIRED for localhost
     token="test-token",
     url="http://localhost:8000",
     instance="crn:v1:bluemix:public:quantum-computing:us-east:a/local::local",
     verify=False
 )
 
-# Use like normal IBM Quantum service
-backends = service.backends()  # Returns 59 fake backends
-backend = service.backend("fake_manila")
+# List available backends (default: 59 backends with @aer)
+backends = service.backends()
+# Returns: ['fake_manila@aer', 'fake_quantum_sim@aer', ...]
+
+# Select backend with executor
+backend = service.backend("fake_manila@aer")  # CPU executor
+
+# Run circuit
+sampler = SamplerV2(mode=backend)
+circuit = random_circuit(5, 2)
+job = sampler.run([circuit])
+result = job.result()
 ```
 
 ## API Endpoints
@@ -71,72 +84,84 @@ backend = service.backend("fake_manila")
 | PATCH | `/v1/sessions/{id}` | Update session |
 | DELETE | `/v1/sessions/{id}/close` | Cancel session |
 
-## Configuration
+## Multi-Executor Configuration
 
-### Executor Selection
-
-The server supports pluggable executors for circuit simulation:
+### Default Setup (CPU only)
 
 ```bash
-# Default: CPU simulation (QiskitRuntimeLocalService)
-qiskit-runtime-server
+# Server startup with default Aer executor
+uv run qiskit-runtime-server
 
-# GPU simulation (when available)
-QRS_EXECUTOR=gpu qiskit-runtime-server
-
-# Or programmatically
-from qiskit_runtime_server import create_app
-from qiskit_runtime_server.executors import GPUExecutor
-
-app = create_app(executor=GPUExecutor(device=0))
+# Available backends: fake_manila@aer, fake_quantum_sim@aer, ... (59 total)
 ```
 
-### Backend Topology
+### Multi-Executor Setup (CPU + GPU)
 
-Backends provide topology (coupling map) and noise parameters (T1, T2, gate errors). The executor uses this metadata for realistic simulation:
+```bash
+# Install with GPU support
+uv sync --extra custatevec  # Requires CUDA 12.x
+```
 
 ```python
-# Client selects backend for topology/noise
-backend = service.backend("fake_manila")  # 5-qubit Falcon r4T
+# Server configuration
+from qiskit_runtime_server import create_app
+from qiskit_runtime_server.executors import AerExecutor, CuStateVecExecutor
 
-# The server's executor (CPU or GPU) uses FakeManila's:
-# - Coupling map: [(0,1), (1,2), (1,3), (3,4)]
-# - T1, T2 relaxation times
-# - Gate error rates
-# - Readout errors
+app = create_app(executors={
+    "aer": AerExecutor(),                # CPU
+    "custatevec": CuStateVecExecutor(),  # GPU
+})
+
+# Creates: 59 × 2 = 118 virtual backends
+# - fake_manila@aer (CPU)
+# - fake_manila@custatevec (GPU)
+# - ... (all combinations)
 ```
 
-See [Backend & Executor Configuration](docs/BACKEND_EXECUTOR_CONFIG.md) for advanced options.
+```python
+# Client usage
+backend_cpu = service.backend("fake_manila@aer")       # Use CPU
+backend_gpu = service.backend("fake_manila@custatevec")  # Use GPU
+```
 
-### Environment Variables
+### Virtual Backend System
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `QRS_HOST` | `0.0.0.0` | Server host |
-| `QRS_PORT` | `8000` | Server port |
-| `QRS_EXECUTOR` | `local` | Executor: `local` or `gpu` |
-| `QRS_LOG_LEVEL` | `INFO` | Logging level |
-| `QRS_GPU_DEVICE` | `0` | GPU device ID (when executor=gpu) |
+The server uses `<metadata>@<executor>` naming to provide explicit executor selection:
+
+- **Metadata**: 59 fake backends from `FakeProviderForBackendV2` (topology, noise parameters)
+- **Executor**: Simulation engine (CPU via Aer, GPU via cuStateVec, or custom)
+- **Result**: Dynamic virtual backend generation (metadata × executor combinations)
+
+See [docs/BACKEND_EXECUTOR_CONFIG.md](docs/BACKEND_EXECUTOR_CONFIG.md) for details.
 
 ## Use Cases
 
 - **Local Development**: Develop and test quantum algorithms without IBM Cloud access
+- **GPU Acceleration**: Run large-scale quantum simulations with GPU support
 - **CI/CD Testing**: Run quantum circuit tests in automated pipelines
 - **Education**: Learn Qiskit without requiring IBM Quantum account
 - **Offline Development**: Work on quantum applications without internet connectivity
-- **Benchmarking**: Test circuit compilation and execution locally
+- **Executor Comparison**: Benchmark CPU vs GPU performance on same circuits
 
 ## Documentation
 
-- [API Specification](docs/API_SPECIFICATION.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Backend & Executor Configuration](docs/BACKEND_EXECUTOR_CONFIG.md)
-- [Development Guide](docs/DEVELOPMENT.md)
+- **[Architecture](docs/ARCHITECTURE.md)** - Multi-executor system architecture
+- **[Backend & Executor Configuration](docs/BACKEND_EXECUTOR_CONFIG.md)** - Virtual backend system and executor setup
+- **[API Specification](docs/API_SPECIFICATION.md)** - Complete REST API reference
+- **[Design Decisions](docs/DESIGN_DECISIONS.md)** - Design rationale and alternatives
+- **[Development Guide](docs/DEVELOPMENT.md)** - Development workflow and testing
+- **[Implementation Status](IMPLEMENTATION_STATUS.md)** - Phase 3 completion status
 
 ## Requirements
 
-- Python 3.10+
-- qiskit-ibm-runtime >= 0.20.0
+- Python 3.12+
+- qiskit-ibm-runtime >= 0.43.1
+- qiskit-aer >= 0.17.2
+- FastAPI >= 0.123.8
+
+**Optional** (GPU support):
+- CUDA 12.x
+- cuquantum-python >= 25.11.0 (install via `uv sync --extra custatevec`)
 
 ## License
 

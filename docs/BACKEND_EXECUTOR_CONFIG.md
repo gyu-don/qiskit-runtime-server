@@ -343,16 +343,7 @@ job = sampler.run([circuit], executor="gpu")
 
 **Concept**: Run separate server instances for different executors.
 
-```bash
-# Not implemented
-QRS_PORT=8000 QRS_EXECUTOR=local qiskit-runtime-server  # CPU
-QRS_PORT=8001 QRS_EXECUTOR=gpu qiskit-runtime-server    # GPU
-```
-
-**Why not implemented**:
-- Requires multiple processes
-- More complex deployment
-- Virtual backends provide same functionality in single instance
+Not implemented. Virtual backends provide the same functionality in a single server instance.
 
 ---
 

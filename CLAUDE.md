@@ -17,6 +17,7 @@ qiskit-runtime-server/
 ├── CONTRIBUTING.md             # Contribution guidelines
 ├── LICENSE                     # Apache 2.0 license
 ├── .pre-commit-config.yaml     # Pre-commit hooks configuration
+├── app.example.py              # Application template (copy to app.py)
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml              # CI pipeline (lint, type check, test)
@@ -24,9 +25,7 @@ qiskit-runtime-server/
 ├── src/
 │   └── qiskit_runtime_server/  # Server package
 │       ├── __init__.py
-│       ├── __main__.py         # CLI entry point
 │       ├── app.py              # FastAPI app factory (create_app)
-│       ├── config.py           # Configuration management
 │       ├── models.py           # Pydantic models
 │       ├── providers/
 │       │   └── backend_metadata.py  # BackendMetadataProvider
@@ -75,13 +74,20 @@ uv sync
 
 # Install pre-commit hooks (REQUIRED before any commits)
 uv run pre-commit install
+
+# Create application file from template
+cp app.example.py app.py
+# Edit app.py to customize executor configuration
 ```
 
 ### Common Commands
 
 ```bash
 # Run the server
-uv run qiskit-runtime-server
+uvicorn app:app --host 0.0.0.0 --port 8000
+
+# Or with auto-reload for development
+uvicorn app:app --reload
 
 # Run tests
 uv run pytest

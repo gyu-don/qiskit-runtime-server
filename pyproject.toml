@@ -32,14 +32,10 @@ classifiers = [
 dependencies = [
     "fastapi>=0.123.8",
     "pydantic>=2.12.5",
-    "pydantic-settings>=2.12.0",
     "qiskit-aer>=0.17.2",
     "qiskit-ibm-runtime>=0.43.1",
     "uvicorn[standard]>=0.38.0",
 ]
-
-[project.scripts]
-qiskit-runtime-server = "qiskit_runtime_server.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/gyu-don/qiskit-runtime-server"

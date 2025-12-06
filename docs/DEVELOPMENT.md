@@ -48,11 +48,14 @@ Pre-commit hooks will run automatically on `git commit`, checking:
 ### Running the Server
 
 ```bash
-# Development mode with auto-reload
-uv run qiskit-runtime-server
+# First, create app.py from template (if not already done)
+cp app.example.py app.py
 
-# Or directly with uvicorn
-uv run uvicorn qiskit_runtime_server.app:app --reload --host 0.0.0.0 --port 8000
+# Development mode with auto-reload
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+
+# Production mode
+uvicorn app:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
 Server will be available at:
@@ -350,8 +353,20 @@ def auth_headers() -> Dict[str, str]:
 
 ### Enable Debug Logging
 
+```python
+# app.py
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+
+from qiskit_runtime_server import create_app
+# ... rest of configuration
+```
+
+Then run the server:
+
 ```bash
-QRS_LOG_LEVEL=DEBUG uv run qiskit-runtime-server
+uvicorn app:app --log-level debug
 ```
 
 ### Using Python Debugger
@@ -367,6 +382,7 @@ import pdb; pdb.set_trace()
 ### VS Code Configuration
 
 `.vscode/launch.json`:
+
 ```json
 {
     "version": "0.2.0",
@@ -375,10 +391,9 @@ import pdb; pdb.set_trace()
             "name": "Run Server",
             "type": "python",
             "request": "launch",
-            "module": "qiskit_runtime_server",
-            "env": {
-                "QRS_LOG_LEVEL": "DEBUG"
-            }
+            "module": "uvicorn",
+            "args": ["app:app", "--reload"],
+            "cwd": "${workspaceFolder}"
         },
         {
             "name": "Run Tests",

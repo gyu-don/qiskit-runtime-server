@@ -269,33 +269,41 @@ app = create_app(executors={
 
 ### Client Connection
 
-To connect to the local server, use `channel="local"` in `QiskitRuntimeService`:
+To connect to the local server, use the `local_service_helper.py` script (located in `examples/`) that patches IBM Cloud authentication:
 
 ```python
-from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
-from qiskit.circuit.random import random_circuit
+from qiskit_ibm_runtime import SamplerV2
+from qiskit import QuantumCircuit, transpile
+from local_service_helper import local_service_connection
 
-service = QiskitRuntimeService(
-    channel="local",  # REQUIRED for localhost
-    token="test-token",
-    url="http://localhost:8000",
-    instance="crn:v1:bluemix:public:quantum-computing:us-east:a/local::local",
-    verify=False
-)
+# Connect to local server with context manager
+with local_service_connection("http://localhost:8000") as service:
+    # List available backends
+    backends = service.backends()
+    # Returns: ['fake_manila@aer', 'fake_manila@custatevec', ...]
 
-# List available backends
-backends = service.backends()
-# Returns: ['fake_manila@aer', 'fake_manila@custatevec', ...]
+    # Select backend with explicit executor
+    backend = service.backend("fake_manila@aer")  # CPU executor
+    # backend = service.backend("fake_manila@custatevec")  # GPU executor
 
-# Select backend with explicit executor
-backend = service.backend("fake_manila@aer")  # CPU executor
-# backend = service.backend("fake_manila@custatevec")  # GPU executor
+    # Create and transpile circuit
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    circuit.measure_all()
+    circuit = transpile(circuit, backend=backend)
 
-sampler = SamplerV2(mode=backend)
-circuit = random_circuit(5, 2)
-job = sampler.run([circuit])
-result = job.result()
+    # Run circuit
+    sampler = SamplerV2(mode=backend)
+    job = sampler.run([circuit])
+    result = job.result()
 ```
+
+**Why use `local_service_helper.py`?**
+- The official `qiskit-ibm-runtime` client expects IBM Cloud IAM authentication
+- The helper script patches authentication flows to work with localhost or custom domains
+- Works without forking or modifying the `qiskit-ibm-runtime` package
+- Uses `channel="ibm_cloud"` internally with patched authentication methods
 
 ## Testing Guidelines
 

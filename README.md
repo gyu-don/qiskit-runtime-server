@@ -11,13 +11,13 @@ This project provides a FastAPI-based REST API server that implements the IBM Qi
 ## Features
 
 - **Multi-Executor Support**: Run CPU (Aer) and GPU (cuStateVec) executors simultaneously
-- **Virtual Backends**: 59 fake backends × N executors (e.g., `fake_manila@aer`, `fake_manila@custatevec`)
+- **Virtual Backends**: Explicit executor selection via `<metadata>@<executor>` naming (e.g., `fake_manila@aer`, `fake_manila@custatevec`)
 - **Full API Compatibility**: IBM Qiskit Runtime Backend API (v2025-05-01)
 - **Sampler & Estimator**: Support for both V2 primitives
 - **Session Mode**: Dedicated/batch job grouping
 - **Async Job Execution**: Non-blocking job submission with FIFO queue
 - **Auto-Documentation**: Swagger UI and ReDoc
-- **Zero Client Changes**: Works with standard `qiskit-ibm-runtime` client using `channel="local"`
+- **Simple Client Setup**: Works with standard `qiskit-ibm-runtime` client via authentication patch helper
 
 ## Quick Start
 
@@ -40,7 +40,9 @@ uv run uvicorn app:app --host 0.0.0.0 --port 8000
 
 ### Client
 
-**Option 1: Using local_service_helper.py (Recommended)**
+**Using local_service_helper.py**
+
+The official `qiskit-ibm-runtime` client is designed for IBM Cloud and uses IBM Cloud authentication (IAM tokens). To connect to a local server without modifying the client library, use the provided helper script that patches the authentication flow.
 
 ```bash
 # Download the helper script
@@ -52,7 +54,7 @@ cp qiskit-runtime-server/examples/local_service_helper.py .
 
 ```python
 from qiskit_ibm_runtime import SamplerV2
-from qiskit.circuit.random import random_circuit
+from qiskit import QuantumCircuit, transpile
 from local_service_helper import local_service_connection
 
 # Connect to local server with context manager
@@ -64,45 +66,28 @@ with local_service_connection("http://localhost:8000") as service:
     # Select backend with executor
     backend = service.backend("fake_manila@aer")  # CPU executor
 
+    # Create and transpile circuit
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    circuit.measure_all()
+    circuit = transpile(circuit, backend=backend)
+
     # Run circuit
     sampler = SamplerV2(mode=backend)
-    circuit = random_circuit(5, 2)
     job = sampler.run([circuit])
     result = job.result()
 ```
 
-**Option 2: Using channel="local" (Limited compatibility)**
+> **Why is patching needed?**
+> - The client library attempts to authenticate with IBM Cloud IAM servers
+> - It validates instance CRNs against IBM Cloud services
+> - The helper script patches these authentication and validation flows to work with localhost or custom domains
+> - This approach works without forking or modifying the `qiskit-ibm-runtime` package
 
-```python
-from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
-from qiskit.circuit.random import random_circuit
+**Alternative: Direct connection (not recommended)**
 
-# Connect to local server
-# NOTE: This may not work with all qiskit-ibm-runtime versions
-service = QiskitRuntimeService(
-    channel="local",  # REQUIRED for localhost
-    token="test-token",
-    url="http://localhost:8000",
-    instance="crn:v1:bluemix:public:quantum-computing:us-east:a/local::local",
-    verify=False
-)
-
-# List available backends (default: 59 backends with @aer)
-backends = service.backends()
-# Returns: ['fake_manila@aer', 'fake_quantum_sim@aer', ...]
-
-# Select backend with executor
-backend = service.backend("fake_manila@aer")  # CPU executor
-
-# Run circuit
-sampler = SamplerV2(mode=backend)
-circuit = random_circuit(5, 2)
-job = sampler.run([circuit])
-result = job.result()
-```
-
-> **Why use local_service_helper.py?**
-> The official `qiskit-ibm-runtime` client is designed for IBM Cloud and may have authentication issues with local servers. The helper script patches these authentication flows to enable seamless local server connection.
+You can try connecting directly with `channel="local"` (deprecated since qiskit-ibm-runtime 0.15.0) or `channel="ibm_cloud"` (requires manual patching). However, these methods may not work reliably across different client library versions. **Always prefer using `local_service_helper.py`**.
 
 ## API Endpoints
 
@@ -198,15 +183,39 @@ backend_cpu = service.backend("fake_manila@aer")       # Use CPU
 backend_gpu = service.backend("fake_manila@custatevec")  # Use GPU
 ```
 
-### Virtual Backend System
+### Virtual Backend Naming: `<metadata>@<executor>`
 
-The server uses `<metadata>@<executor>` naming to provide explicit executor selection:
+The server uses **virtual backends** with explicit executor selection through naming convention:
 
-- **Metadata**: 59 fake backends from `FakeProviderForBackendV2` (topology, noise parameters)
-- **Executor**: Simulation engine (CPU via Aer, GPU via cuStateVec, or custom)
-- **Result**: Dynamic virtual backend generation (metadata × executor combinations)
+**Format**: `<metadata>@<executor>`
 
-See [docs/BACKEND_EXECUTOR_CONFIG.md](docs/BACKEND_EXECUTOR_CONFIG.md) for details.
+**Examples**:
+- `fake_manila@aer` - Manila topology (5 qubits), CPU execution (Aer)
+- `fake_manila@custatevec` - Manila topology (5 qubits), GPU execution (cuStateVec)
+- `fake_quantum_sim@aer` - Generic simulator, CPU execution
+
+**Components**:
+- **Metadata** (59 fake backends from `FakeProviderForBackendV2`):
+  - Backend topology (qubit count, coupling map)
+  - Noise parameters (T1/T2 times, gate errors, readout errors)
+  - Basis gates
+  - Used by client for transpilation and noise modeling
+- **Executor** (pluggable simulation engine):
+  - `aer` - CPU-based simulation (qiskit-aer)
+  - `custatevec` - GPU-accelerated simulation (cuQuantum)
+  - Custom executors via `BaseExecutor` interface
+
+**How it works**:
+1. Client requests `fake_manila@aer` backend
+2. Server provides Manila topology metadata (for client-side transpilation)
+3. Client transpiles circuit to Manila topology constraints
+4. Client submits job with `backend: "fake_manila@aer"`
+5. Server parses backend name → routes to `aer` executor
+6. Executor runs the pre-transpiled circuit
+
+**Result**: 59 base backends × N executors = 59N total virtual backends
+
+See [docs/BACKEND_EXECUTOR_CONFIG.md](docs/BACKEND_EXECUTOR_CONFIG.md) for complete details.
 
 ## Use Cases
 

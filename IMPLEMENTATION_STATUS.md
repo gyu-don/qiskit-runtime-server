@@ -1,6 +1,6 @@
 # Implementation Status - Phase 3 Complete
 
-**Last Updated**: 2025-12-06
+**Last Updated**: 2025-12-08
 **Status**: Phase 3 (Executor Abstraction + Virtual Backends) ✅ Complete
 
 ---
@@ -8,6 +8,15 @@
 ## Summary
 
 The Qiskit Runtime Server has completed Phase 3 implementation with the following key achievements:
+
+### 📦 Recent Additions (2025-12-08)
+
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines and workflow
+- **[examples/06_backend_status.py](examples/06_backend_status.py)** - Backend status monitoring example
+- **[examples/local_service_helper.py](examples/local_service_helper.py)** - Enhanced with better documentation
+- **[.github/workflows/release.yml](release.yml)** - Release automation workflow
+- **Documentation updates**: README.md, CLAUDE.md, docs/ARCHITECTURE.md updated with `local_service_helper.py` usage
 
 ### ✅ Implemented Features
 
@@ -46,58 +55,24 @@ The Qiskit Runtime Server has completed Phase 3 implementation with the followin
 
 ## Architecture Overview
 
-### Virtual Backend System
+The server implements a **multi-executor abstraction** with virtual backends:
 
-```
-User Request: backend = "fake_manila@aer"
-                            │
-                            ▼
-      BackendMetadataProvider.parse_backend_name()
-                            │
-                ┌───────────┴───────────┐
-                ▼                       ▼
-         metadata_name           executor_name
-         "fake_manila"               "aer"
-                │                       │
-                ▼                       ▼
-        Get FakeManila          executors["aer"]
-        topology/noise          AerExecutor instance
-                │                       │
-                └───────────┬───────────┘
-                            ▼
-                    Execute with Aer on
-                    FakeManila topology
-```
+- **Virtual Backend Naming**: `<metadata>@<executor>` (e.g., `fake_manila@aer`)
+- **Metadata**: 59 fake backends from `FakeProviderForBackendV2` (topology, noise parameters)
+- **Executors**: Pluggable simulation engines (`aer`, `custatevec`, custom)
+- **Job Routing**: JobManager routes jobs to correct executor based on backend name
 
-### Multi-Executor Job Routing
-
+**Example**:
 ```python
-# Server startup
+# Server startup with multiple executors
 app = create_app(executors={
-    "aer": AerExecutor(),
-    "custatevec": CuStateVecExecutor(),
+    "aer": AerExecutor(),           # CPU
+    "custatevec": CuStateVecExecutor(),  # GPU
 })
-
-# Available virtual backends:
-# - fake_manila@aer
-# - fake_manila@custatevec
-# - fake_quantum_sim@aer
-# - fake_quantum_sim@custatevec
-# - ... (59 × 2 = 118 total)
-
-# Client request: POST /v1/jobs
-{
-    "program_id": "sampler",
-    "backend": "fake_manila@aer",  # Routed to AerExecutor
-    "params": {...}
-}
-
-{
-    "program_id": "sampler",
-    "backend": "fake_manila@custatevec",  # Routed to CuStateVecExecutor
-    "params": {...}
-}
+# Creates: fake_manila@aer, fake_manila@custatevec, ... (59 × 2 = 118 backends)
 ```
+
+For detailed architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
@@ -137,187 +112,188 @@ src/qiskit_runtime_server/
 
 ## Usage Examples
 
-### Server Startup (Default: Aer only)
-
-```python
-from qiskit_runtime_server import create_app
-
-# Default: Aer executor only
-app = create_app()
-
-# Available backends: fake_manila@aer, fake_quantum_sim@aer, ... (59 total)
-```
-
-### Server Startup (Multiple Executors)
+### Server Startup
 
 ```python
 from qiskit_runtime_server import create_app
 from qiskit_runtime_server.executors import AerExecutor, CuStateVecExecutor
 
+# Default: Aer executor only
+app = create_app()
+# Available: fake_manila@aer, ... (59 backends)
+
+# Multiple executors
 app = create_app(executors={
     "aer": AerExecutor(),
     "custatevec": CuStateVecExecutor(),
 })
-
-# Available backends: 59 × 2 = 118 virtual backends
-# - fake_manila@aer
-# - fake_manila@custatevec
-# - ...
+# Available: fake_manila@aer, fake_manila@custatevec, ... (118 backends)
 ```
+
+See [examples/](examples/) for complete usage examples.
 
 ### Client Usage
 
 ```python
-from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
+from qiskit_ibm_runtime import SamplerV2
+from qiskit import QuantumCircuit, transpile
+from local_service_helper import local_service_connection
 
-service = QiskitRuntimeService(
-    channel="local",
-    token="test-token",
-    url="http://localhost:8000",
-    instance="crn:v1:bluemix:public:quantum-computing:us-east:a/local::local",
-    verify=False
-)
+# Connect to local server with context manager (using helper from examples/)
+with local_service_connection("http://localhost:8000") as service:
+    # List available backends
+    backends = service.backends()
+    # Returns: [
+    #   "fake_manila@aer",
+    #   "fake_manila@custatevec",
+    #   "fake_quantum_sim@aer",
+    #   ...
+    # ]
 
-# List available backends
-backends = service.backends()
-# Returns: [
-#   "fake_manila@aer",
-#   "fake_manila@custatevec",
-#   "fake_quantum_sim@aer",
-#   ...
-# ]
+    # Use CPU executor (Aer)
+    backend_cpu = service.backend("fake_manila@aer")
+    circuit = QuantumCircuit(2)
+    circuit.h(0)
+    circuit.cx(0, 1)
+    circuit.measure_all()
+    circuit = transpile(circuit, backend=backend_cpu)
 
-# Use CPU executor (Aer)
-backend_cpu = service.backend("fake_manila@aer")
-sampler_cpu = SamplerV2(mode=backend_cpu)
-job_cpu = sampler_cpu.run([circuit])
+    sampler_cpu = SamplerV2(mode=backend_cpu)
+    job_cpu = sampler_cpu.run([circuit])
+    result_cpu = job_cpu.result()
 
-# Use GPU executor (cuStateVec)
-backend_gpu = service.backend("fake_manila@custatevec")
-sampler_gpu = SamplerV2(mode=backend_gpu)
-job_gpu = sampler_gpu.run([circuit])
+    # Use GPU executor (cuStateVec)
+    backend_gpu = service.backend("fake_manila@custatevec")
+    circuit = transpile(circuit, backend=backend_gpu)
+
+    sampler_gpu = SamplerV2(mode=backend_gpu)
+    job_gpu = sampler_gpu.run([circuit])
+    result_gpu = job_gpu.result()
 ```
+
+**Note**: The `local_service_helper.py` script patches IBM Cloud authentication flows to work with localhost. See [examples/local_service_helper.py](examples/local_service_helper.py) for details.
 
 ---
 
 ## Testing
 
-### Unit Tests
-
 ```bash
-# Test executor implementations
+# All tests
+uv run pytest
+
+# Specific components
 uv run pytest tests/server/test_executors.py
-
-# Test backend metadata provider
-uv run pytest tests/server/test_backend_metadata.py
-
-# Test job manager
-uv run pytest tests/server/test_job_manager.py
-```
-
-### Integration Tests
-
-```bash
-# Test full client-server flow
 uv run pytest tests/integration/test_client_server.py
+
+# With coverage
+uv run pytest --cov=src --cov-report=term-missing
 ```
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for testing guidelines.
 
 ---
 
 ## Dependencies
 
-### Required (always installed)
+**Required**: FastAPI, Pydantic, qiskit-aer, qiskit-ibm-runtime, uvicorn
 
-```toml
-dependencies = [
-    "fastapi>=0.123.8",
-    "pydantic>=2.12.5",
-    "pydantic-settings>=2.12.0",
-    "qiskit-aer>=0.17.2",           # AerExecutor
-    "qiskit-ibm-runtime>=0.43.1",
-    "uvicorn[standard]>=0.38.0",
-]
-```
-
-### Optional (GPU support)
-
-```toml
-[project.optional-dependencies]
-custatevec = [
-    "cuquantum-python>=25.11.0",  # CuStateVecExecutor
-]
-```
-
-**Install GPU support:**
-
+**Optional** (GPU support):
 ```bash
-# CUDA 12.x required
-uv sync --extra custatevec
+uv sync --extra custatevec  # Requires CUDA 12.x
 ```
+
+See [pyproject.toml](pyproject.toml) for complete dependency list.
 
 ---
 
-## Next Steps (Phase 4 - Optional)
+## Next Steps (Future Enhancements)
 
-These are **optional enhancements** and not required for production use:
+### High Priority
+
+1. **Test and Type Checking Coverage Expansion** (1-4 hours)
+   - **Objective**: Improve product stability and code quality
+   - **Deliverables**:
+     - Make `tests/` and `app.example.py` pass ruff and mypy checks
+     - Update pre-commit hook and CI configuration to include these files in checks
+   - **Validation**:
+     - Configure pre-commit hooks to include these files
+     - Verify `uv run pre-commit run --all-files` passes without errors
+   - **Completion Criteria**:
+     - No specification or behavior changes
+     - `tests/` and `app.example.py` fully compliant with ruff and mypy
+
+2. **Extend local_service_helper.py for Custom Domains**
+   - **Current**: Works only with `localhost` and `127.0.0.1`
+   - **Target**: Support local network IPs and custom domains
+   - **Use Cases**:
+     - LAN deployment (e.g., `http://192.168.1.100:8000`)
+     - Custom domain testing (e.g., `http://quantum.local:8000`)
+   - **Implementation**: Modify URL validation in [examples/local_service_helper.py](examples/local_service_helper.py:64-74)
+
+3. **CuStateVec Executor Implementation**
+   - **Status**: `CuStateVecExecutor` class exists but `execute_sampler()` and `execute_estimator()` are not implemented
+   - **Dependencies**: CUDA 12.x, cuQuantum Python bindings
+   - **Testing**: Requires GPU hardware (NVIDIA A100/H100 recommended)
+   - **Files**: [src/qiskit_runtime_server/executors/custatevec.py](src/qiskit_runtime_server/executors/custatevec.py)
+
+4. **SessionManager Implementation**
+   - **Status**: Skeleton exists, not fully functional
+   - **Features**:
+     - Session lifecycle management (create, close, cancel)
+     - Dedicated mode (sequential job execution)
+     - Batch mode (parallel job execution)
+   - **Files**: [src/qiskit_runtime_server/managers/session_manager.py](src/qiskit_runtime_server/managers/session_manager.py)
+
+### Optional Enhancements
+
+These are **not required** for production use:
 
 1. **Route Separation** (Optional)
    - Move endpoints from `app.py` to `routes/backends.py`, `routes/jobs.py`
    - Improves code organization but not functionally necessary
 
 2. **CLI Entry Point** (`__main__.py`)
-   - Command-line server launcher
+   - Command-line server launcher with argument parsing
    - Environment variable configuration
-   - Currently can use `uv run uvicorn` directly
+   - Currently can use `uv run uvicorn app:app` directly
 
 3. **Configuration Management** (`config.py`)
    - Centralized config with pydantic-settings
    - Currently using factory function parameters
+   - Would enable configuration via environment variables
 
 ---
 
 ## Documentation Status
 
-### ✅ Up-to-date (Phase 3 Complete)
+### ✅ Up-to-date
 
-- **`IMPLEMENTATION_STATUS.md`** (this file) - Phase 3 status
-- **`docs/ARCHITECTURE.md`** - Multi-executor system architecture
-- **`docs/BACKEND_EXECUTOR_CONFIG.md`** - Virtual backend naming and configuration
-- **`docs/DESIGN_DECISIONS.md`** - Multi-executor rationale and design decisions
-- **`docs/API_SPECIFICATION.md`** - Complete REST API reference
-- **`docs/DEVELOPMENT.md`** - Development workflow and executor guide
-- **`CLAUDE.md`** - Updated with multi-executor architecture
+- [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) (this file) - Current implementation status
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Multi-executor system architecture
+- [docs/BACKEND_EXECUTOR_CONFIG.md](docs/BACKEND_EXECUTOR_CONFIG.md) - Virtual backend naming and configuration
+- [docs/DESIGN_DECISIONS.md](docs/DESIGN_DECISIONS.md) - Design rationale and alternatives
+- [docs/API_SPECIFICATION.md](docs/API_SPECIFICATION.md) - Complete REST API reference
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) - Development workflow and testing
+- [CLAUDE.md](CLAUDE.md) - AI assistant guidance
+- [README.md](README.md) - Main project documentation
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
+- [CHANGELOG.md](CHANGELOG.md) - Version history
 
-### 📚 Reference Documentation
+### 📚 Reference (Historical)
 
-- `tmp/design.md` - Original implementation plan (Phase 3 complete)
-- `tmp/executor-implementation.md` - Executor implementation spec
-- `tmp/README.md` - Prototype → production migration guide
-- `tmp/deviation.md` - Prototype vs. production differences
-
-### 🔄 May Need Update
-
-- **`README.md`** - Main project README (should verify usage examples match current API)
+- [tmp/design.md](tmp/design.md) - Original implementation plan
+- [tmp/executor-implementation.md](tmp/executor-implementation.md) - Executor implementation spec
+- [tmp/README.md](tmp/README.md) - Prototype → production migration guide
 
 ---
 
-## tmp/ Directory Status
+## tmp/ Directory
 
-The `tmp/` directory contains **reference prototypes and design docs**:
+Contains **historical reference materials** from prototype development. Phase 3 is complete, so these are for reference only:
 
-### Keep (Reference)
-
-- `tmp/README.md` - Overview of prototype→production migration
-- `tmp/design.md` - Implementation guide (mostly complete)
-- `tmp/executor-implementation.md` - Executor implementation spec
-- `tmp/deviation.md` - Prototype vs. production differences
-
-### Can Be Archived
-
-- `tmp/src/` - Prototype code (all logic migrated to `src/`)
-- `tmp/tasks.md` - Old task tracking (Phase 3 complete)
-
-**Recommendation**: Keep `tmp/` for historical reference, but add note that Phase 3 is complete.
+- Prototype code (migrated to `src/`)
+- Implementation guides (completed)
+- Task tracking (archived)
 
 ---
 
@@ -344,4 +320,4 @@ The `tmp/` directory contains **reference prototypes and design docs**:
 
 **No breaking changes** - existing code using single executor continues to work.
 
-**Next priority**: Update documentation to reflect Phase 3 architecture.
+**Future priorities**: See "Next Steps (Future Enhancements)" section above for planned improvements.

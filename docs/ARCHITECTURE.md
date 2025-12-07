@@ -93,6 +93,89 @@ This document describes the system architecture of the Qiskit Runtime Server, a 
 
 The **Executor** is the abstraction that enables pluggable simulation backends.
 
+### Executor Design Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Executor Abstraction                         │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │                      BaseExecutor (ABC)                       │  │
+│  │                                                               │  │
+│  │  Abstract Methods:                                            │  │
+│  │  • execute_sampler(pubs, options, backend_name) → Result     │  │
+│  │  • execute_estimator(pubs, options, backend_name) → Result   │  │
+│  │  • name: str (property)                                       │  │
+│  │                                                               │  │
+│  │  Helper Methods:                                              │  │
+│  │  • get_backend(backend_name) → FakeBackendV2                 │  │
+│  │    ↳ Query FakeProvider for metadata                         │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                  │                                  │
+│                                  │                                  │
+│         ┌────────────────────────┴────────────────────────┐         │
+│         │                                                  │         │
+│         ▼                                                  ▼         │
+│  ┌──────────────────┐                           ┌─────────────────┐ │
+│  │  AerExecutor     │                           │ CuStateVec      │ │
+│  │  (CPU)           │                           │ Executor (GPU)  │ │
+│  │                  │                           │                 │ │
+│  │  • Uses Aer's    │                           │ • Uses cuQuantum│ │
+│  │    QiskitRuntime │                           │   cuStateVec    │ │
+│  │    LocalService  │                           │ • GPU-accelerated│ │
+│  │  • Default       │                           │ • Optional dep  │ │
+│  │    executor      │                           │                 │ │
+│  └──────────────────┘                           └─────────────────┘ │
+│                                                                     │
+│         Custom Executors (User-Defined):                            │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐  │
+│  │ NoiseExecutor    │  │ HybridExecutor   │  │ MyCustomExecutor│  │
+│  │ (Future)         │  │ (Future)         │  │                 │  │
+│  └──────────────────┘  └──────────────────┘  └─────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+Data Flow: Job Execution
+────────────────────────────────────────────────────────────────────
+
+Client Request:
+  POST /v1/jobs {backend: "fake_manila@aer", ...}
+           │
+           ▼
+  ┌─────────────────────┐
+  │  JobManager         │
+  │                     │
+  │  1. Parse backend   │──► backend_name.split("@")
+  │     name            │    → ("fake_manila", "aer")
+  │                     │
+  │  2. Route to        │──► executors["aer"]
+  │     executor        │
+  └─────────────────────┘
+           │
+           ▼
+  ┌─────────────────────┐
+  │  AerExecutor        │
+  │                     │
+  │  1. Receive params  │──► execute_sampler(pubs, options, "fake_manila")
+  │                     │    (Note: receives "fake_manila", NOT "fake_manila@aer")
+  │  2. Get metadata    │──► self.get_backend("fake_manila")
+  │     (optional)      │    → FakeManila backend object
+  │                     │
+  │  3. Execute circuit │──► QiskitRuntimeLocalService + Aer
+  │                     │
+  │  4. Return result   │──► PrimitiveResult
+  └─────────────────────┘
+           │
+           ▼
+  ┌─────────────────────┐
+  │  JobManager         │
+  │                     │
+  │  Store result       │──► job.status = "COMPLETED"
+  │                     │    job.result = result
+  └─────────────────────┘
+```
+
 ### Protocol Definition
 
 See [src/qiskit_runtime_server/executors/base.py](../src/qiskit_runtime_server/executors/base.py) for the complete interface definition.

@@ -40,11 +40,45 @@ uv run uvicorn app:app --host 0.0.0.0 --port 8000
 
 ### Client
 
+**Option 1: Using local_service_helper.py (Recommended)**
+
+```bash
+# Download the helper script
+wget https://raw.githubusercontent.com/gyu-don/qiskit-runtime-server/main/examples/local_service_helper.py
+
+# Or copy from examples/ directory if cloned
+cp qiskit-runtime-server/examples/local_service_helper.py .
+```
+
+```python
+from qiskit_ibm_runtime import SamplerV2
+from qiskit.circuit.random import random_circuit
+from local_service_helper import local_service_connection
+
+# Connect to local server with context manager
+with local_service_connection("http://localhost:8000") as service:
+    # List available backends (default: 59 backends with @aer)
+    backends = service.backends()
+    # Returns: ['fake_manila@aer', 'fake_quantum_sim@aer', ...]
+
+    # Select backend with executor
+    backend = service.backend("fake_manila@aer")  # CPU executor
+
+    # Run circuit
+    sampler = SamplerV2(mode=backend)
+    circuit = random_circuit(5, 2)
+    job = sampler.run([circuit])
+    result = job.result()
+```
+
+**Option 2: Using channel="local" (Limited compatibility)**
+
 ```python
 from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
 from qiskit.circuit.random import random_circuit
 
 # Connect to local server
+# NOTE: This may not work with all qiskit-ibm-runtime versions
 service = QiskitRuntimeService(
     channel="local",  # REQUIRED for localhost
     token="test-token",
@@ -66,6 +100,9 @@ circuit = random_circuit(5, 2)
 job = sampler.run([circuit])
 result = job.result()
 ```
+
+> **Why use local_service_helper.py?**
+> The official `qiskit-ibm-runtime` client is designed for IBM Cloud and may have authentication issues with local servers. The helper script patches these authentication flows to enable seamless local server connection.
 
 ## API Endpoints
 

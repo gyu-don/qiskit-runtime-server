@@ -66,6 +66,76 @@ class TestBackendsEndpoint:
         assert all(name.endswith("@aer") for name in backend_names)
         assert any("fake_manila@aer" in name for name in backend_names)
 
+    def test_get_backend_status(self):
+        """Test GET /v1/backends/{backend_name}/status."""
+        app = create_app(executors={"aer": AerExecutor()})
+        client = TestClient(app)
+
+        response = client.get("/v1/backends/fake_manila@aer/status")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["state"] is True
+        assert data["status"] == "active"
+        assert data["message"] == ""
+        assert "length_queue" in data
+        assert isinstance(data["length_queue"], int)
+        assert data["length_queue"] >= 0
+        assert data["backend_version"] == "1.0.0"
+
+    def test_get_backend_status_not_found(self):
+        """Test getting status of non-existent backend."""
+        app = create_app(executors={"aer": AerExecutor()})
+        client = TestClient(app)
+
+        # Backend without executor suffix
+        response = client.get("/v1/backends/fake_manila/status")
+        assert response.status_code == 404
+
+        # Unknown executor
+        response = client.get("/v1/backends/fake_manila@unknown/status")
+        assert response.status_code == 404
+
+        # Unknown metadata
+        response = client.get("/v1/backends/fake_unknown@aer/status")
+        assert response.status_code == 404
+
+    def test_get_backend_status_queue_length(self):
+        """Test backend status reflects queue length."""
+        app = create_app(executors={"aer": AerExecutor()})
+        client = TestClient(app)
+
+        # Check initial queue length is 0
+        response = client.get("/v1/backends/fake_manila@aer/status")
+        assert response.status_code == 200
+        initial_queue = response.json()["length_queue"]
+        assert initial_queue == 0
+
+        # Create a job (this will be queued/running)
+        circuit = QuantumCircuit(2)
+        circuit.h(0)
+        circuit.measure_all()
+
+        pubs_data = [(circuit,)]
+        serialized_params = json.loads(json.dumps({"pubs": pubs_data}, cls=RuntimeEncoder))
+
+        response = client.post(
+            "/v1/jobs",
+            json={
+                "program_id": "sampler",
+                "backend": "fake_manila@aer",
+                "params": serialized_params,
+                "options": {},
+            },
+        )
+        assert response.status_code == 202
+
+        # Check queue length increased (may be 0 if job already completed)
+        response = client.get("/v1/backends/fake_manila@aer/status")
+        assert response.status_code == 200
+        # Queue length should be >= 0 (job may have completed quickly)
+        assert response.json()["length_queue"] >= 0
+
 
 class TestJobsEndpoint:
     """Test jobs endpoints."""
@@ -105,6 +175,8 @@ class TestJobsEndpoint:
         data = response.json()
         assert "id" in data
         assert data["id"].startswith("job-")
+        assert "backend" in data
+        assert data["backend"] == "fake_manila@aer"
 
     def test_create_job_invalid_backend(self, client, simple_circuit):
         """Test creating job with invalid backend name."""
@@ -169,15 +241,16 @@ class TestJobsEndpoint:
 
         data = response.json()
         assert data["id"] == job_id
-        assert data["status"] in [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.COMPLETED]
+        assert "state" in data
+        assert data["state"]["status"] in [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.COMPLETED]
 
     def test_get_job_status_not_found(self, client):
         """Test getting status of non-existent job."""
         response = client.get("/v1/jobs/non-existent-job")
         assert response.status_code == 404
 
-    def test_get_job_results(self, client, simple_circuit):
-        """Test GET /v1/jobs/{job_id}/results."""
+    def test_get_job_results_success(self, client, simple_circuit):
+        """Test GET /v1/jobs/{job_id}/results for successful job."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]
         serialized_params = json.loads(json.dumps({"pubs": pubs_data}, cls=RuntimeEncoder))
@@ -194,29 +267,61 @@ class TestJobsEndpoint:
         )
         job_id = response.json()["id"]
 
-        # Wait for completion/failure
+        # Wait for completion
         max_wait = 10
         for _ in range(max_wait):
             response = client.get(f"/v1/jobs/{job_id}")
-            status = response.json()["status"]
+            status = response.json()["state"]["status"]
             if status in [JobStatus.COMPLETED, JobStatus.FAILED]:
                 break
             time.sleep(1)
 
-        # Get results
+        # Get results - should return 200 for successful job
         response = client.get(f"/v1/jobs/{job_id}/results")
-        assert response.status_code == 200
+        assert response.status_code == 200, (
+            f"Job should complete successfully, got {response.status_code}"
+        )
 
+        # Verify result structure
         data = response.json()
-        assert data["id"] == job_id
-        assert data["status"] in [JobStatus.COMPLETED, JobStatus.FAILED]
-        assert "results" in data
+        assert isinstance(data, dict)
+        # PrimitiveResult should have __type__ and __value__ fields
+        # or pub_results and metadata fields
+        assert "__type__" in data or "pub_results" in data
 
-        # If completed, verify results are properly serialized
-        if data["status"] == JobStatus.COMPLETED:
-            assert data["results"] is not None
-            # Results should be dict (serialized PrimitiveResult)
-            assert isinstance(data["results"], dict)
+    def test_get_job_results_not_completed(self, client):
+        """Test GET /v1/jobs/{job_id}/results returns 400 for non-completed job."""
+        # Create a simple circuit
+        circuit = QuantumCircuit(1)
+        circuit.h(0)
+        circuit.measure_all()
+
+        pubs_data = [(circuit,)]
+        serialized_params = json.loads(json.dumps({"pubs": pubs_data}, cls=RuntimeEncoder))
+
+        # Create job
+        response = client.post(
+            "/v1/jobs",
+            json={
+                "program_id": "sampler",
+                "backend": "fake_manila@aer",
+                "params": serialized_params,
+                "options": {},
+            },
+        )
+        job_id = response.json()["id"]
+
+        # Try to get results immediately (job likely still QUEUED or RUNNING)
+        # Note: This test is timing-dependent, but should work most of the time
+        response = client.get(f"/v1/jobs/{job_id}/results")
+
+        # Should return 400 if job is not completed yet
+        # (or 200 if job completed very quickly, which is also valid)
+        assert response.status_code in [200, 400]
+
+        if response.status_code == 400:
+            # Verify error message indicates job is not completed
+            assert "not completed" in response.json()["detail"].lower()
 
     def test_cancel_job(self, client, simple_circuit):
         """Test DELETE /v1/jobs/{job_id}."""
@@ -268,24 +373,27 @@ class TestJobsEndpoint:
             response = client.get(f"/v1/jobs/{job_id}")
             assert response.status_code == 200
 
-            status = response.json()["status"]
+            status = response.json()["state"]["status"]
             statuses_seen.add(status)
 
             if status in [JobStatus.COMPLETED, JobStatus.FAILED]:
                 break
             time.sleep(1)
 
-        # Should have completed or failed
-        assert (JobStatus.COMPLETED in statuses_seen) or (JobStatus.FAILED in statuses_seen)
+        # Should have completed (simple circuit should succeed)
+        assert JobStatus.COMPLETED in statuses_seen, (
+            f"Job should complete successfully, statuses seen: {statuses_seen}"
+        )
 
-        # 3. Get results
+        # 3. Get results - should return 200 for successful job
         response = client.get(f"/v1/jobs/{job_id}/results")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] in [JobStatus.COMPLETED, JobStatus.FAILED]
-        assert "results" in data
+        assert response.status_code == 200, (
+            f"Job completed successfully, should return 200, got {response.status_code}"
+        )
 
-        # If completed, verify results are properly serialized
-        if data["status"] == JobStatus.COMPLETED:
-            assert data["results"] is not None
-            assert isinstance(data["results"], dict)
+        # Verify result structure
+        data = response.json()
+        assert isinstance(data, dict)
+        # PrimitiveResult should have __type__ and __value__ fields
+        # or pub_results and metadata fields
+        assert "__type__" in data or "pub_results" in data

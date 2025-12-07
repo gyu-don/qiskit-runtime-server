@@ -180,29 +180,44 @@ Get calibration properties (T1, T2, gate errors, etc.).
 
 ### Get Backend Status
 
-Get real-time operational status.
+Get real-time operational status for a backend.
+
+For local simulation backends, this endpoint always returns active status with the current queue length for the backend's executor.
 
 **Endpoint**: `GET /v1/backends/{id}/status`
 
 **Path Parameters**:
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `id` | string | Backend identifier |
+| `id` | string | Backend identifier (e.g., `fake_manila@aer`) |
 
 **Response**: `200 OK`
 
 ```json
 {
-  "backend_name": "fake_manila",
-  "backend_version": "1.0.0",
   "state": true,
   "status": "active",
-  "length_queue": 0
+  "message": "",
+  "length_queue": 0,
+  "backend_version": "1.0.0"
 }
 ```
 
+**Response Fields**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `state` | boolean | Backend operational state (always `true` for local backends) |
+| `status` | string | Backend status (always `"active"` for local backends) |
+| `message` | string | Status message (empty for normal operation) |
+| `length_queue` | integer | Number of jobs currently queued or running for this backend's executor |
+| `backend_version` | string | Backend version |
+
+**Notes**:
+- The `length_queue` field reflects the number of QUEUED + RUNNING jobs for the backend's executor
+- Multiple backends using the same executor (e.g., `fake_manila@aer`, `fake_kyoto@aer`) share the same queue
+
 **Errors**:
-- `404 Not Found`: Backend does not exist
+- `404 Not Found`: Backend does not exist or invalid backend name format
 
 ---
 
@@ -266,21 +281,20 @@ Create and execute a runtime job.
 | `options` | object | No | Runtime options |
 | `session_id` | string | No | Associated session ID |
 
-**Response**: `201 Created`
+**Response**: `202 Accepted`
 
 ```json
 {
   "id": "job-abc123",
-  "program": {"id": "sampler"},
-  "backend": "fake_manila",
-  "state": {
-    "status": "QUEUED",
-    "reason": null
-  },
-  "created": "2024-01-15T10:30:00Z",
-  "session_id": "job-abc123"
+  "backend": "fake_manila@aer"
 }
 ```
+
+**Response Fields**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique job identifier |
+| `backend` | string | Backend name (echoed from request) |
 
 **Errors**:
 - `400 Bad Request`: Invalid parameters or backend mismatch
@@ -304,18 +318,28 @@ Get the current status of a job.
 ```json
 {
   "id": "job-abc123",
-  "program": {"id": "sampler"},
-  "backend": "fake_manila",
   "state": {
     "status": "COMPLETED",
     "reason": null
   },
-  "created": "2024-01-15T10:30:00Z",
-  "session_id": "job-abc123"
+  "created_at": "2024-01-15T10:30:00Z",
+  "started_at": "2024-01-15T10:30:01Z",
+  "completed_at": "2024-01-15T10:30:05Z"
 }
 ```
 
-**Job Status Values**:
+**Response Fields**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique job identifier |
+| `state` | object | Job state information |
+| `state.status` | string | Current job status (see below) |
+| `state.reason` | string/null | Error message if failed, null otherwise |
+| `created_at` | datetime | Job creation timestamp |
+| `started_at` | datetime/null | Job start timestamp (null if not started) |
+| `completed_at` | datetime/null | Job completion timestamp (null if not completed) |
+
+**Job Status Values (`state.status`)**:
 - `QUEUED`: Job waiting to execute
 - `RUNNING`: Job currently executing
 - `COMPLETED`: Job finished successfully

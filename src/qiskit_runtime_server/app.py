@@ -4,6 +4,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -12,14 +13,31 @@ from qiskit_ibm_runtime.utils import RuntimeEncoder
 from .executors.base import BaseExecutor
 from .managers.job_manager import JobManager
 from .models import (
-    BackendsResponse,
     JobCreateRequest,
     JobCreateResponse,
+    JobState,
+    JobStatus,
     JobStatusResponse,
 )
-from .providers.backend_metadata import get_backend_metadata_provider
+from .providers.backend_metadata import BackendMetadataProvider
 
 logger = logging.getLogger(__name__)
+
+
+class BackendEncoder(json.JSONEncoder):
+    """Custom JSON encoder for backend configuration.
+
+    Converts Python objects to IBM Quantum API compatible JSON format:
+    - complex numbers → [real, imag] arrays
+    - datetime objects → ISO 8601 strings
+    """
+
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, complex):
+            return [obj.real, obj.imag]
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
@@ -44,7 +62,7 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
 
     # Create managers
     job_manager = JobManager(executors=executors)
-    metadata_provider = get_backend_metadata_provider(available_executors)
+    metadata_provider = BackendMetadataProvider(available_executors)
 
     # Lifespan context manager for startup/shutdown
     @asynccontextmanager
@@ -86,7 +104,7 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
         }
 
     @app.get("/v1/backends")
-    async def list_backends(fields: str | None = None) -> BackendsResponse:
+    async def list_backends(fields: str | None = None) -> dict[str, Any]:
         """
         List all virtual backends (metadata × executor combinations).
 
@@ -97,7 +115,118 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
             List of backends with metadata
         """
         response = metadata_provider.list_backends(fields)
-        return response
+
+        # Serialize with BackendEncoder to handle datetime and complex numbers
+        json_str = json.dumps(response.model_dump(), cls=BackendEncoder)
+        return json.loads(json_str)  # type: ignore[no-any-return]
+
+    @app.get("/v1/backends/{backend_name}/configuration")
+    async def get_backend_configuration(backend_name: str) -> dict[str, Any]:
+        """
+        Get configuration for a specific backend.
+
+        Args:
+            backend_name: Backend name in 'metadata@executor' format
+
+        Returns:
+            Backend configuration dict
+        """
+        # Parse backend name
+        parsed = metadata_provider.parse_backend_name(backend_name)
+        if not parsed:
+            raise HTTPException(status_code=404, detail=f"Backend {backend_name} not found")
+
+        metadata_name, _executor_name = parsed
+
+        # Get backend from FakeProvider
+        backend = metadata_provider.provider.backend(metadata_name)
+
+        # Return configuration dict (same format as list_backends but for single backend)
+        backend_dict = metadata_provider._backend_to_dict(backend)
+        backend_dict["name"] = backend_name
+        backend_dict["backend_name"] = backend_name
+
+        # Serialize with BackendEncoder to handle datetime and complex numbers
+        json_str = json.dumps(backend_dict, cls=BackendEncoder)
+        return json.loads(json_str)  # type: ignore[no-any-return]
+
+    @app.get("/v1/backends/{backend_name}/properties")
+    async def get_backend_properties(backend_name: str) -> dict[str, Any]:
+        """
+        Get properties (calibration data) for a specific backend.
+
+        Args:
+            backend_name: Backend name in 'metadata@executor' format
+
+        Returns:
+            Backend properties dict with calibration data
+        """
+        # Parse backend name
+        parsed = metadata_provider.parse_backend_name(backend_name)
+        if not parsed:
+            raise HTTPException(status_code=404, detail=f"Backend {backend_name} not found")
+
+        metadata_name, _executor_name = parsed
+
+        # Get backend from FakeProvider
+        backend = metadata_provider.provider.backend(metadata_name)
+
+        # Get properties from backend
+        if hasattr(backend, "properties") and callable(backend.properties):
+            properties = backend.properties()
+            if properties and hasattr(properties, "to_dict"):
+                # Get properties dict - contains datetime objects
+                props_dict = properties.to_dict()
+
+                # Override backend_name to use virtual backend name
+                props_dict["backend_name"] = backend_name
+
+                # Serialize with BackendEncoder to handle datetime objects
+                json_str = json.dumps(props_dict, cls=BackendEncoder)
+                return json.loads(json_str)  # type: ignore[no-any-return]
+
+        # Properties not available - return 404
+        raise HTTPException(
+            status_code=404, detail=f"Properties not available for backend {backend_name}"
+        )
+
+    @app.get("/v1/backends/{backend_name}/status")
+    async def get_backend_status(backend_name: str) -> dict[str, Any]:
+        """
+        Get backend operational status.
+
+        For local simulation backends, always return active status.
+
+        Args:
+            backend_name: Backend name in 'metadata@executor' format
+
+        Returns:
+            Backend status information
+        """
+        # Parse and validate backend name
+        parsed = metadata_provider.parse_backend_name(backend_name)
+        if not parsed:
+            raise HTTPException(status_code=404, detail=f"Backend {backend_name} not found")
+
+        metadata_name, executor_name = parsed
+
+        # Verify backend metadata exists
+        try:
+            metadata_provider.provider.backend(metadata_name)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"Backend {backend_name} not found") from e
+
+        # Get queue length for this executor
+        queue_length = job_manager.get_queue_length(executor_name)
+
+        # Return active status for all local backends
+        return {
+            "state": True,
+            "status": "active",
+            "message": "",
+            "length_queue": queue_length,
+            "backend_version": "1.0.0",
+        }
 
     @app.post("/v1/jobs", status_code=202)
     async def create_job(request: JobCreateRequest) -> JobCreateResponse:
@@ -123,7 +252,7 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
                 params=request.params,
                 options=request.options or {},
             )
-            return JobCreateResponse(id=job_id)
+            return JobCreateResponse(id=job_id, backend=request.backend)
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -147,11 +276,13 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
 
         return JobStatusResponse(
             id=job_info.job_id,
-            status=job_info.status,
+            state=JobState(
+                status=job_info.status,
+                reason=job_info.error_message,
+            ),
             created_at=job_info.created_at,
             started_at=job_info.started_at,
             completed_at=job_info.completed_at,
-            error_message=job_info.error_message,
         )
 
     @app.get("/v1/jobs/{job_id}/results")
@@ -172,24 +303,24 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
         if job_info is None:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        # Serialize results using RuntimeEncoder
-        results_data = None
+        if job_info.status != JobStatus.COMPLETED:
+            raise HTTPException(
+                status_code=400, detail=f"Job is not completed (status: {job_info.status})"
+            )
+
         if job_info.result_data is not None:
             try:
-                # Use RuntimeEncoder to properly serialize PrimitiveResult
-                # This handles QuantumCircuit, Observables, and PrimitiveResult
                 json_str = json.dumps(job_info.result_data, cls=RuntimeEncoder)
-                results_data = json.loads(json_str)
+                result: dict[str, Any] = json.loads(json_str)
+                return result
             except Exception as e:
                 logger.error("Failed to serialize results for job %s: %s", job_id, e, exc_info=True)
-                results_data = {"error": "Failed to serialize results", "details": str(e)}
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to serialize results: {e!s}"
+                ) from e
 
-        return {
-            "id": job_info.job_id,
-            "status": job_info.status,
-            "results": results_data,
-            "error_message": job_info.error_message,
-        }
+        # No results available (shouldn't happen for COMPLETED jobs)
+        raise HTTPException(status_code=404, detail="No results available")
 
     @app.delete("/v1/jobs/{job_id}")
     async def cancel_job(job_id: str) -> dict[str, Any]:

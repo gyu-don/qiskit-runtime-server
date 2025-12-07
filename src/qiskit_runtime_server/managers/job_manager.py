@@ -300,6 +300,39 @@ class JobManager:
 
             return False
 
+    def get_queue_length(self, executor_name: str | None = None) -> int:
+        """
+        Get number of jobs in queue (QUEUED + RUNNING) for a specific executor.
+
+        Args:
+            executor_name: Optional executor name to filter by.
+                          If None, returns total queue length for all executors.
+
+        Returns:
+            Number of queued or running jobs
+        """
+        with self._lock:
+            if executor_name is None:
+                # Return total count of QUEUED + RUNNING jobs
+                return sum(
+                    1
+                    for job in self.jobs.values()
+                    if job.status in (JobStatus.QUEUED, JobStatus.RUNNING)
+                )
+
+            # Filter by executor name
+            count = 0
+            for job in self.jobs.values():
+                if job.status not in (JobStatus.QUEUED, JobStatus.RUNNING):
+                    continue
+
+                # Parse backend name to get executor
+                parsed = self.metadata_provider.parse_backend_name(job.backend_name)
+                if parsed and parsed[1] == executor_name:
+                    count += 1
+
+            return count
+
     def shutdown(self) -> None:
         """Shutdown worker thread gracefully."""
         logger.info("Shutting down job manager...")

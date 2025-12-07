@@ -59,17 +59,24 @@ class JobCreateResponse(BaseModel):
     """Response model for job creation."""
 
     id: str
+    backend: str
+
+
+class JobState(BaseModel):
+    """Job state nested object for IBM API compatibility."""
+
+    status: JobStatus
+    reason: str | None = None
 
 
 class JobStatusResponse(BaseModel):
     """Response model for job status."""
 
     id: str
-    status: JobStatus
+    state: JobState
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    error_message: str | None = None
 
 
 class JobResultResponse(BaseModel):

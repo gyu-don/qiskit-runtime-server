@@ -76,23 +76,17 @@ class BackendMetadataProvider:
         Returns:
             Dictionary with backend metadata.
         """
-        # Get basic properties
-        result: dict[str, Any] = {
-            "backend_name": backend.name,
-            "backend_version": getattr(backend, "backend_version", "2"),
-            "num_qubits": backend.num_qubits,
-            "simulator": False,  # Fake backends represent real devices
-            "online_date": None,
-            "operational": True,
-        }
+        result: dict[str, Any] = backend.to_dict()
+        # Ensure operational status (server-side property, not in backend metadata)
+        result["operational"] = True
 
-        # Add coupling map if available
-        if hasattr(backend, "coupling_map") and backend.coupling_map is not None:
-            result["coupling_map"] = list(backend.coupling_map.get_edges())
+        # max_experiments is a server-side limit, not in backend metadata
+        if "max_experiments" not in result:
+            result["max_experiments"] = 300
 
-        # Add basis gates
-        if hasattr(backend, "operation_names"):
-            result["basis_gates"] = list(backend.operation_names)
+        # Add supported_instructions if not present
+        if "supported_instructions" not in result and hasattr(backend, "operation_names"):
+            result["supported_instructions"] = list(backend.operation_names)
 
         return result
 
@@ -122,6 +116,7 @@ class BackendMetadataProvider:
             for executor_name in self.available_executors:
                 virtual_name = f"{backend.name}@{executor_name}"
                 backend_dict = self._backend_to_dict(backend)
+                backend_dict["name"] = virtual_name
                 backend_dict["backend_name"] = virtual_name
                 virtual_backends.append(backend_dict)
 

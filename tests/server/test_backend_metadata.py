@@ -85,7 +85,7 @@ class TestListBackends:
         # Check first backend has required fields
         first_backend = response.devices[0]
         assert "backend_name" in first_backend
-        assert "num_qubits" in first_backend
+        assert "n_qubits" in first_backend  # FakeProvider uses n_qubits, not num_qubits
         assert "backend_version" in first_backend
         assert first_backend["backend_name"].endswith("@aer")
 

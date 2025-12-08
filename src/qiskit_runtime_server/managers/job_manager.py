@@ -5,14 +5,17 @@ import logging
 import queue
 import threading
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from qiskit_ibm_runtime.utils import RuntimeDecoder
 
 from ..executors.base import BaseExecutor
 from ..models import JobInfo, JobStatus
-from ..providers.backend_metadata import get_backend_metadata_provider
+from ..providers.backend_metadata import get_backend_metadata_provider, BackendMetadataProvider
+
+if TYPE_CHECKING:
+    from ..managers import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,7 @@ class JobManager:
     - Thread-safe job state management
     """
 
-    def __init__(self, executors: dict[str, BaseExecutor], session_manager: Any | None = None):
+    def __init__(self, executors: dict[str, BaseExecutor], session_manager: "SessionManager | None" = None):
         """
         Initialize job manager with executors.
 
@@ -40,7 +43,7 @@ class JobManager:
         self.executors = executors
         self.jobs: dict[str, JobInfo] = {}
         self._lock = threading.Lock()
-        self._metadata_provider: Any = None
+        self._metadata_provider: BackendMetadataProvider | None = None
         self._session_manager = session_manager
 
         # Job queue (FIFO)
@@ -54,7 +57,7 @@ class JobManager:
         self._start_worker()
 
     @property
-    def metadata_provider(self) -> Any:
+    def metadata_provider(self) -> BackendMetadataProvider:
         """Lazy-load metadata provider."""
         if self._metadata_provider is None:
             executor_names = list(self.executors.keys())

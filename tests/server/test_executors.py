@@ -142,7 +142,7 @@ class TestAerExecutor:
 class TestAerExecutorOptions:
     """Tests for AerExecutor option handling."""
 
-    def test_max_parallel_threads_option(self):
+    def test_max_parallel_threads_option(self) -> None:
         """Test that max_parallel_threads is applied."""
         executor = AerExecutor(max_parallel_threads=4)
 
@@ -158,7 +158,7 @@ class TestAerExecutorOptions:
         assert result is not None
         assert len(result) == 1
 
-    def test_estimator_with_precision(self):
+    def test_estimator_with_precision(self) -> None:
         """Test estimator with explicit precision option."""
         executor = AerExecutor()
 
@@ -178,7 +178,7 @@ class TestAerExecutorOptions:
         assert result is not None
         assert len(result) == 1
 
-    def test_estimator_without_precision(self):
+    def test_estimator_without_precision(self) -> None:
         """Test estimator without precision option (default behavior)."""
         executor = AerExecutor()
 

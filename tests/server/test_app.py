@@ -9,22 +9,22 @@ from qiskit import QuantumCircuit
 from qiskit_ibm_runtime.utils import RuntimeEncoder
 
 from qiskit_runtime_server import create_app
-from qiskit_runtime_server.executors import AerExecutor
+from qiskit_runtime_server.executors import AerExecutor, BaseExecutor
 from qiskit_runtime_server.models import JobStatus
 
 
 class TestCreateApp:
     """Test create_app factory."""
 
-    def test_create_app_default(self):
+    def test_create_app_default(self) -> None:
         """Test creating app with default executors."""
         app = create_app()
         assert app is not None
         assert app.title == "Qiskit Runtime Backend API"
 
-    def test_create_app_with_executors(self):
+    def test_create_app_with_executors(self) -> None:
         """Test creating app with custom executors."""
-        executors = {"aer": AerExecutor()}
+        executors: dict[str, BaseExecutor] = {"aer": AerExecutor()}
         app = create_app(executors=executors)
         assert app is not None
 
@@ -32,7 +32,7 @@ class TestCreateApp:
 class TestRootEndpoint:
     """Test root endpoint."""
 
-    def test_root(self):
+    def test_root(self) -> None:
         """Test GET /."""
         app = create_app()
         client = TestClient(app)
@@ -50,7 +50,7 @@ class TestRootEndpoint:
 class TestBackendsEndpoint:
     """Test backends endpoint."""
 
-    def test_list_backends(self):
+    def test_list_backends(self) -> None:
         """Test GET /v1/backends."""
         app = create_app(executors={"aer": AerExecutor()})
         client = TestClient(app)
@@ -66,7 +66,7 @@ class TestBackendsEndpoint:
         assert all(name.endswith("@aer") for name in backend_names)
         assert any("fake_manila@aer" in name for name in backend_names)
 
-    def test_get_backend_status(self):
+    def test_get_backend_status(self) -> None:
         """Test GET /v1/backends/{backend_name}/status."""
         app = create_app(executors={"aer": AerExecutor()})
         client = TestClient(app)
@@ -83,7 +83,7 @@ class TestBackendsEndpoint:
         assert data["length_queue"] >= 0
         assert data["backend_version"] == "1.0.0"
 
-    def test_get_backend_status_not_found(self):
+    def test_get_backend_status_not_found(self) -> None:
         """Test getting status of non-existent backend."""
         app = create_app(executors={"aer": AerExecutor()})
         client = TestClient(app)
@@ -100,7 +100,7 @@ class TestBackendsEndpoint:
         response = client.get("/v1/backends/fake_unknown@aer/status")
         assert response.status_code == 404
 
-    def test_get_backend_status_queue_length(self):
+    def test_get_backend_status_queue_length(self) -> None:
         """Test backend status reflects queue length."""
         app = create_app(executors={"aer": AerExecutor()})
         client = TestClient(app)
@@ -141,13 +141,13 @@ class TestJobsEndpoint:
     """Test jobs endpoints."""
 
     @pytest.fixture
-    def client(self):
+    def client(self) -> TestClient:
         """Create test client."""
         app = create_app(executors={"aer": AerExecutor()})
         return TestClient(app)
 
     @pytest.fixture
-    def simple_circuit(self):
+    def simple_circuit(self) -> QuantumCircuit:
         """Create a simple quantum circuit."""
         circuit = QuantumCircuit(2)
         circuit.h(0)
@@ -155,7 +155,9 @@ class TestJobsEndpoint:
         circuit.measure_all()
         return circuit
 
-    def test_create_job_returns_202(self, client, simple_circuit):
+    def test_create_job_returns_202(
+        self, client: TestClient, simple_circuit: QuantumCircuit
+    ) -> None:
         """Test POST /v1/jobs returns 202 Accepted."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]
@@ -178,7 +180,9 @@ class TestJobsEndpoint:
         assert "backend" in data
         assert data["backend"] == "fake_manila@aer"
 
-    def test_create_job_invalid_backend(self, client, simple_circuit):
+    def test_create_job_invalid_backend(
+        self, client: TestClient, simple_circuit: QuantumCircuit
+    ) -> None:
         """Test creating job with invalid backend name."""
         # No @executor
         response = client.post(
@@ -216,7 +220,7 @@ class TestJobsEndpoint:
         )
         assert response.status_code == 404
 
-    def test_get_job_status(self, client, simple_circuit):
+    def test_get_job_status(self, client: TestClient, simple_circuit: QuantumCircuit) -> None:
         """Test GET /v1/jobs/{job_id}."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]
@@ -244,12 +248,14 @@ class TestJobsEndpoint:
         assert "state" in data
         assert data["state"]["status"] in [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.COMPLETED]
 
-    def test_get_job_status_not_found(self, client):
+    def test_get_job_status_not_found(self, client: TestClient) -> None:
         """Test getting status of non-existent job."""
         response = client.get("/v1/jobs/non-existent-job")
         assert response.status_code == 404
 
-    def test_get_job_results_success(self, client, simple_circuit):
+    def test_get_job_results_success(
+        self, client: TestClient, simple_circuit: QuantumCircuit
+    ) -> None:
         """Test GET /v1/jobs/{job_id}/results for successful job."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]
@@ -289,7 +295,7 @@ class TestJobsEndpoint:
         # or pub_results and metadata fields
         assert "__type__" in data or "pub_results" in data
 
-    def test_get_job_results_not_completed(self, client):
+    def test_get_job_results_not_completed(self, client: TestClient) -> None:
         """Test GET /v1/jobs/{job_id}/results returns 400 for non-completed job."""
         # Create a simple circuit
         circuit = QuantumCircuit(1)
@@ -323,7 +329,7 @@ class TestJobsEndpoint:
             # Verify error message indicates job is not completed
             assert "not completed" in response.json()["detail"].lower()
 
-    def test_cancel_job(self, client, simple_circuit):
+    def test_cancel_job(self, client: TestClient, simple_circuit: QuantumCircuit) -> None:
         """Test DELETE /v1/jobs/{job_id}."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]
@@ -346,7 +352,7 @@ class TestJobsEndpoint:
         # Either 200 (cancelled) or 400 (already running/completed)
         assert response.status_code in [200, 400]
 
-    def test_job_lifecycle(self, client, simple_circuit):
+    def test_job_lifecycle(self, client: TestClient, simple_circuit: QuantumCircuit) -> None:
         """Test full job lifecycle: create → status → results."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]

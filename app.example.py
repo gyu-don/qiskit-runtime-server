@@ -13,7 +13,7 @@ For development with auto-reload:
 """
 
 from qiskit_runtime_server import create_app
-from qiskit_runtime_server.executors import AerExecutor
+from qiskit_runtime_server.executors import AerExecutor, BaseExecutor
 
 try:
     from qiskit_runtime_server.executors import CuStateVecExecutor
@@ -26,7 +26,7 @@ except ImportError:
 # Executor Configuration
 # ==============================================================================
 
-executors = {
+executors: dict[str, BaseExecutor] = {
     "aer": AerExecutor(
         shots=1024,
         seed_simulator=None,  # Set to int for deterministic results

@@ -11,12 +11,13 @@ This allows testing with a local server while using the actual client library.
 
 import threading
 import time
+from collections.abc import Generator
 
 import pytest
 import uvicorn
 from qiskit import QuantumCircuit
 from qiskit.providers.exceptions import QiskitBackendNotFoundError
-from qiskit_ibm_runtime import SamplerV2
+from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
 
 from qiskit_runtime_server import create_app
 from qiskit_runtime_server.executors import AerExecutor
@@ -24,7 +25,7 @@ from tests.conftest import create_test_service
 
 
 @pytest.fixture(scope="module")
-def test_server():
+def test_server() -> Generator[str, None, None]:
     """Start a test server in a background thread.
 
     Yields the server URL for HTTP client connection.
@@ -71,7 +72,7 @@ def test_server():
 
 
 @pytest.fixture
-def service(test_server):
+def service(test_server: str) -> Generator[QiskitRuntimeService, None, None]:
     """Create QiskitRuntimeService connected to test server.
 
     Uses create_test_service helper from conftest to patch authentication.
@@ -83,7 +84,7 @@ def service(test_server):
 class TestEndToEndBackends:
     """Test backend listing and information retrieval via QiskitRuntimeService."""
 
-    def test_list_backends(self, service):
+    def test_list_backends(self, service: QiskitRuntimeService) -> None:
         """Test listing backends returns virtual backends."""
         backends = service.backends()
         backend_names = [b.name for b in backends]
@@ -93,7 +94,7 @@ class TestEndToEndBackends:
         assert "fake_athens@aer" in backend_names
         assert len(backend_names) > 0
 
-    def test_get_backend_info(self, service):
+    def test_get_backend_info(self, service: QiskitRuntimeService) -> None:
         """Test retrieving specific backend information."""
         backend = service.backend("fake_manila@aer")
 
@@ -109,7 +110,7 @@ class TestEndToEndBackends:
 class TestEndToEndSampler:
     """Test Sampler execution end-to-end via QiskitRuntimeService."""
 
-    def test_simple_bell_circuit(self, service):
+    def test_simple_bell_circuit(self, service: QiskitRuntimeService) -> None:
         """Test running a simple Bell state circuit with Sampler."""
         from qiskit import transpile
 
@@ -149,7 +150,7 @@ class TestEndToEndSampler:
         # Bell state typically has |00> and |11>
         assert any(key in counts for key in ["00", "11"])
 
-    def test_multiple_circuits(self, service):
+    def test_multiple_circuits(self, service: QiskitRuntimeService) -> None:
         """Test running multiple circuits in one job."""
         from qiskit import transpile
 
@@ -183,7 +184,7 @@ class TestEndToEndSampler:
 class TestEndToEndJobLifecycle:
     """Test job lifecycle and status transitions via QiskitRuntimeService."""
 
-    def test_job_status_progression(self, service):
+    def test_job_status_progression(self, service: QiskitRuntimeService) -> None:
         """Test job status progresses through states."""
         from qiskit import transpile
 
@@ -223,12 +224,12 @@ class TestEndToEndJobLifecycle:
 class TestEndToEndErrorHandling:
     """Test error handling in QiskitRuntimeService interaction."""
 
-    def test_invalid_backend(self, service):
+    def test_invalid_backend(self, service: QiskitRuntimeService) -> None:
         """Test requesting a non-existent backend."""
         with pytest.raises(QiskitBackendNotFoundError):
             service.backend("nonexistent_backend@aer")
 
-    def test_backend_without_executor(self, service):
+    def test_backend_without_executor(self, service: QiskitRuntimeService) -> None:
         """Test that only configured executors appear in backend list."""
         backends = service.backends()
         backend_names = [b.name for b in backends]

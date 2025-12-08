@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 class TestJobManagerQueue:
     """Tests for job manager queueing functionality."""
 
-    def test_job_manager_queue(self):
+    def test_job_manager_queue(self) -> None:
         """Test that jobs are queued and executed."""
         # Setup
         executors: dict[str, BaseExecutor] = {"aer": AerExecutor()}
@@ -64,7 +64,7 @@ class TestJobManagerQueue:
         # Cleanup
         manager.shutdown()
 
-    def test_job_manager_sequential(self):
+    def test_job_manager_sequential(self) -> None:
         """Test that jobs are executed sequentially, not in parallel."""
         # Setup
         manager = JobManager(executors={"aer": AerExecutor()})
@@ -86,7 +86,11 @@ class TestJobManagerQueue:
         # Check immediately after submission - at most 1 should be running
         # The rest should still be queued
         time.sleep(0.05)  # Very short delay to let worker pick up first job
-        statuses_immediate = [manager.get_job(jid).status for jid in job_ids]
+        statuses_immediate = []
+        for jid in job_ids:
+            job = manager.get_job(jid)
+            if job is not None:
+                statuses_immediate.append(job.status)
         running_count = sum(1 for s in statuses_immediate if s == JobStatus.RUNNING)
 
         # With sequential execution, we should have at most 1 running job
@@ -96,13 +100,14 @@ class TestJobManagerQueue:
 
         # Verify that not all jobs complete at the same time (would indicate parallel execution)
         # Record completion times
-        completion_times = []
+        completion_times: list[float] = []
         for _ in range(30):  # Check for up to 30 seconds
             time.sleep(1.0)
             completed = [
                 manager.get_job(jid)
                 for jid in job_ids
-                if manager.get_job(jid).status == JobStatus.COMPLETED
+                if manager.get_job(jid) is not None
+                and manager.get_job(jid).status == JobStatus.COMPLETED  # type: ignore[union-attr]
             ]
             if len(completed) > len(completion_times):
                 completion_times.append(time.time())
@@ -112,13 +117,14 @@ class TestJobManagerQueue:
         # All jobs should complete eventually
         for job_id in job_ids:
             job = manager.get_job(job_id)
+            assert job is not None
             assert job.status == JobStatus.COMPLETED
             assert job.result_data is not None
 
         # Cleanup
         manager.shutdown()
 
-    def test_job_manager_invalid_backend(self):
+    def test_job_manager_invalid_backend(self) -> None:
         """Test that invalid backend names raise an error."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -146,7 +152,7 @@ class TestJobManagerQueue:
         # Cleanup
         manager.shutdown()
 
-    def test_job_manager_list_jobs(self):
+    def test_job_manager_list_jobs(self) -> None:
         """Test listing all jobs."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -170,7 +176,7 @@ class TestJobManagerQueue:
         # Cleanup
         manager.shutdown()
 
-    def test_job_manager_error_handling(self):
+    def test_job_manager_error_handling(self) -> None:
         """Test that job errors are properly captured."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -189,6 +195,7 @@ class TestJobManagerQueue:
 
         # Check that job failed
         job = manager.get_job(job_id)
+        assert job is not None
         assert job.status == JobStatus.FAILED
         assert job.error_message is not None
         assert "Unknown program_id" in job.error_message
@@ -200,7 +207,7 @@ class TestJobManagerQueue:
 class TestJobManagerShutdown:
     """Tests for job manager shutdown functionality."""
 
-    def test_shutdown(self):
+    def test_shutdown(self) -> None:
         """Test that shutdown stops the worker thread."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -214,7 +221,7 @@ class TestJobManagerShutdown:
         # Worker should be stopped
         assert not manager._worker_thread.is_alive()
 
-    def test_shutdown_with_pending_jobs(self):
+    def test_shutdown_with_pending_jobs(self) -> None:
         """Test shutdown with jobs still in queue."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -232,11 +239,13 @@ class TestJobManagerShutdown:
         manager.shutdown()
 
         # Worker should be stopped
+        assert manager._worker_thread is not None
         assert not manager._worker_thread.is_alive()
 
         # Check job states (some might be completed, some queued)
         for job_id in job_ids:
             job = manager.get_job(job_id)
+            assert job is not None
             assert job.status in [
                 JobStatus.QUEUED,
                 JobStatus.RUNNING,
@@ -248,7 +257,7 @@ class TestJobManagerShutdown:
 class TestJobManagerCancellation:
     """Tests for job cancellation functionality."""
 
-    def test_cancel_queued_job(self):
+    def test_cancel_queued_job(self) -> None:
         """Test cancelling a job that is still queued."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -268,6 +277,7 @@ class TestJobManagerCancellation:
 
         assert success is True
         job = manager.get_job(job_ids[4])
+        assert job is not None
         assert job.status == JobStatus.CANCELLED
         assert job.error_message == "Cancelled by user"
         assert job.completed_at is not None
@@ -275,7 +285,7 @@ class TestJobManagerCancellation:
         # Cleanup
         manager.shutdown()
 
-    def test_cancel_running_job_fails(self):
+    def test_cancel_running_job_fails(self) -> None:
         """Test that cancelling a running job returns False."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -292,6 +302,7 @@ class TestJobManagerCancellation:
         # Wait for it to start running
         time.sleep(0.5)
         job = manager.get_job(job_id)
+        assert job is not None
 
         if job.status == JobStatus.RUNNING:
             # Try to cancel running job (should fail)
@@ -300,12 +311,13 @@ class TestJobManagerCancellation:
 
             # Job should still be running
             job = manager.get_job(job_id)
+            assert job is not None
             assert job.status == JobStatus.RUNNING
 
         # Cleanup
         manager.shutdown()
 
-    def test_cancel_completed_job_fails(self):
+    def test_cancel_completed_job_fails(self) -> None:
         """Test that cancelling a completed job returns False."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -320,6 +332,7 @@ class TestJobManagerCancellation:
         # Wait for completion
         time.sleep(2.0)
         job = manager.get_job(job_id)
+        assert job is not None
         assert job.status == JobStatus.COMPLETED
 
         # Try to cancel completed job (should fail)
@@ -328,12 +341,13 @@ class TestJobManagerCancellation:
 
         # Job should still be completed
         job = manager.get_job(job_id)
+        assert job is not None
         assert job.status == JobStatus.COMPLETED
 
         # Cleanup
         manager.shutdown()
 
-    def test_cancel_nonexistent_job(self):
+    def test_cancel_nonexistent_job(self) -> None:
         """Test that cancelling a non-existent job returns False."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -347,7 +361,7 @@ class TestJobManagerCancellation:
 class TestJobManagerEdgeCases:
     """Tests for edge cases and error conditions."""
 
-    def test_get_nonexistent_job(self):
+    def test_get_nonexistent_job(self) -> None:
         """Test getting a job that doesn't exist."""
         manager = JobManager(executors={"aer": AerExecutor()})
 
@@ -357,7 +371,7 @@ class TestJobManagerEdgeCases:
         # Cleanup
         manager.shutdown()
 
-    def test_invalid_backend_executor_not_found(self):
+    def test_invalid_backend_executor_not_found(self) -> None:
         """Test that executor not found during execution causes job failure."""
         from datetime import UTC, datetime
         from uuid import uuid4
@@ -389,13 +403,15 @@ class TestJobManagerEdgeCases:
 
         # Should fail with invalid backend name (parsed before executor lookup)
         job = manager.get_job(job_id)
+        assert job is not None
         assert job.status == JobStatus.FAILED
+        assert job.error_message is not None
         assert "Invalid backend name" in job.error_message
 
         # Cleanup
         manager.shutdown()
 
-    def test_worker_thread_already_running_warning(self, caplog):
+    def test_worker_thread_already_running_warning(self, caplog) -> None:  # type: ignore[no-untyped-def]
         """Test that starting worker twice logs a warning."""
         import logging
 

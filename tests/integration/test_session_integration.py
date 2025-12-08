@@ -84,7 +84,9 @@ def bell_circuit() -> QuantumCircuit:
 class TestSessionDedicatedMode:
     """Test Session (dedicated mode) - sequential execution."""
 
-    def test_session_single_job(self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit):
+    def test_session_single_job(
+        self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
+    ) -> None:
         """Test running a single job in a session."""
         backend = service.backend("fake_manila@aer")
 
@@ -106,7 +108,7 @@ class TestSessionDedicatedMode:
 
     def test_session_multiple_jobs_sequential(
         self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
-    ):
+    ) -> None:
         """Test running multiple jobs sequentially in a session."""
         backend = service.backend("fake_manila@aer")
 
@@ -129,7 +131,7 @@ class TestSessionDedicatedMode:
 
     def test_session_close_gracefully(
         self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
-    ):
+    ) -> None:
         """Test that closing a session works correctly."""
         backend = service.backend("fake_manila@aer")
 
@@ -147,7 +149,7 @@ class TestSessionDedicatedMode:
         result = job.result()
         assert len(result) == 1
 
-    def test_session_with_estimator(self, service: QiskitRuntimeService):
+    def test_session_with_estimator(self, service: QiskitRuntimeService) -> None:
         """Test estimator primitive in a session."""
         backend = service.backend("fake_manila@aer")
 
@@ -175,7 +177,9 @@ class TestSessionDedicatedMode:
 class TestBatchMode:
     """Test Batch mode - parallel execution."""
 
-    def test_batch_multiple_jobs(self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit):
+    def test_batch_multiple_jobs(
+        self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
+    ) -> None:
         """Test running multiple jobs in batch mode."""
         backend = service.backend("fake_manila@aer")
 
@@ -197,7 +201,7 @@ class TestBatchMode:
                 assert len(result) == 1
                 assert result[0].data.meas.num_shots == 1024
 
-    def test_batch_with_estimator(self, service: QiskitRuntimeService):
+    def test_batch_with_estimator(self, service: QiskitRuntimeService) -> None:
         """Test estimator in batch mode."""
         backend = service.backend("fake_manila@aer")
 
@@ -222,7 +226,7 @@ class TestBatchMode:
 class TestSessionValidation:
     """Test session validation and error handling."""
 
-    def test_session_backend_specified(self, service: QiskitRuntimeService):
+    def test_session_backend_specified(self, service: QiskitRuntimeService) -> None:
         """Test that session requires a backend."""
         backend = service.backend("fake_manila@aer")
 
@@ -232,7 +236,7 @@ class TestSessionValidation:
 
     def test_different_circuits_same_session(
         self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
-    ):
+    ) -> None:
         """Test running different circuits in the same session."""
         backend = service.backend("fake_manila@aer")
 
@@ -264,7 +268,7 @@ class TestSessionLifecycle:
 
     def test_session_context_manager(
         self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
-    ):
+    ) -> None:
         """Test session with context manager."""
         backend = service.backend("fake_manila@aer")
 
@@ -279,7 +283,7 @@ class TestSessionLifecycle:
 
     def test_batch_context_manager(
         self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
-    ):
+    ) -> None:
         """Test batch with context manager."""
         backend = service.backend("fake_manila@aer")
 
@@ -296,7 +300,7 @@ class TestSessionLifecycle:
 class TestMixedPrimitives:
     """Test mixing sampler and estimator in sessions."""
 
-    def test_session_sampler_and_estimator(self, service: QiskitRuntimeService):
+    def test_session_sampler_and_estimator(self, service: QiskitRuntimeService) -> None:
         """Test using both sampler and estimator in same session."""
         backend = service.backend("fake_manila@aer")
 
@@ -335,7 +339,7 @@ class TestMixedPrimitives:
 class TestBackendSelection:
     """Test backend selection in sessions."""
 
-    def test_session_with_explicit_executor(self, service: QiskitRuntimeService):
+    def test_session_with_explicit_executor(self, service: QiskitRuntimeService) -> None:
         """Test session with explicitly named executor."""
         # Use @aer executor explicitly
         backend = service.backend("fake_manila@aer")

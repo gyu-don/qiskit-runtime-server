@@ -28,9 +28,7 @@ class JobManager:
     - Thread-safe job state management
     """
 
-    def __init__(
-        self, executors: dict[str, BaseExecutor], session_manager: Any | None = None
-    ):
+    def __init__(self, executors: dict[str, BaseExecutor], session_manager: Any | None = None):
         """
         Initialize job manager with executors.
 

@@ -83,9 +83,7 @@ class TestCreateSession:
         data = response.json()
         assert data["instance"] == "crn:v1:bluemix:public:quantum-computing:us-east:a/test::test"
 
-    def test_create_session_invalid_backend(
-        self, client: TestClient, auth_headers: dict[str, str]
-    ):
+    def test_create_session_invalid_backend(self, client: TestClient, auth_headers: dict[str, str]):
         """Test creating a session with invalid backend."""
         response = client.post(
             "/v1/sessions",

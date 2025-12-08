@@ -1,5 +1,6 @@
 """Pytest configuration and fixtures."""
 
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 from unittest.mock import patch
@@ -19,7 +20,7 @@ def auth_headers() -> dict[str, str]:
 
 
 @contextmanager
-def create_test_service(url: str):
+def create_test_service(url: str) -> Generator[QiskitRuntimeService, None, None]:
     """Create QiskitRuntimeService for testing with authentication patching.
 
     This helper patches IBM Cloud authentication to allow connecting to a test server.
@@ -39,7 +40,7 @@ def create_test_service(url: str):
     # Patch CloudAccount.list_instances to return mock data
     original_list_instances = CloudAccount.list_instances
 
-    def patched_list_instances(self) -> list[dict[str, Any]]:
+    def patched_list_instances(self: Any) -> list[dict[str, Any]]:
         """Return mock instance data for testing."""
         if self.url and "127.0.0.1" in self.url:
             return [
@@ -49,12 +50,17 @@ def create_test_service(url: str):
                     "name": "test-instance",
                 }
             ]
-        return original_list_instances(self)
+        return original_list_instances(self)  # type: ignore[no-any-return]
 
     # Patch CloudAuth to bypass IAM authentication
 
     def patched_cloudauth_init(
-        self, api_key, crn, private=False, proxies=None, verify=True
+        self: Any,
+        api_key: str,
+        crn: str,
+        private: bool = False,
+        proxies: Any = None,
+        verify: bool = True,
     ) -> None:
         """Skip IAM setup for localhost testing."""
         self.crn = crn
@@ -64,7 +70,7 @@ def create_test_service(url: str):
         self.verify = verify
         self.tm = None  # Skip token manager for localhost
 
-    def patched_get_headers(self) -> dict[str, str]:
+    def patched_get_headers(self: Any) -> dict[str, str]:
         """Return simple headers without IAM token."""
         return {
             "Service-CRN": self.crn,
@@ -72,7 +78,9 @@ def create_test_service(url: str):
         }
 
     # Custom URL resolver that always returns our test server URL with /v1 prefix
-    def mock_url_resolver(_base_url, _instance, _private_endpoint=False, _region=None) -> str:
+    def mock_url_resolver(
+        _base_url: str, _instance: str, _private_endpoint: bool = False, _region: str | None = None
+    ) -> str:
         """Always return the test server URL with /v1 prefix."""
         return f"{url}/v1"
 

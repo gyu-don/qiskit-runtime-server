@@ -21,10 +21,10 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        args: [--config-file=pyproject.toml, src]
+        args: [--config-file=pyproject.toml, src, tests, app.example.py]
         language: system
         entry: uv run mypy
-        files: ^src/
+        files: ^(src|tests)/.*\.py$|^app\.example\.py$
         pass_filenames: false
 
   # General pre-commit hooks

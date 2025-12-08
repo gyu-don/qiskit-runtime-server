@@ -12,7 +12,7 @@ from qiskit_runtime_server.providers.backend_metadata import (
 class TestParseBackendName:
     """Tests for parse_backend_name() method."""
 
-    def test_parse_valid_backend_name(self):
+    def test_parse_valid_backend_name(self) -> None:
         """Test parsing valid 'metadata@executor' format."""
         provider = BackendMetadataProvider(available_executors=["aer", "custatevec"])
 
@@ -22,21 +22,21 @@ class TestParseBackendName:
         result = provider.parse_backend_name("fake_manila@custatevec")
         assert result == ("fake_manila", "custatevec")
 
-    def test_parse_backend_name_without_executor(self):
+    def test_parse_backend_name_without_executor(self) -> None:
         """Test parsing backend name without '@executor' suffix."""
         provider = BackendMetadataProvider(available_executors=["aer"])
 
         result = provider.parse_backend_name("fake_manila")
         assert result is None
 
-    def test_parse_backend_name_unknown_executor(self):
+    def test_parse_backend_name_unknown_executor(self) -> None:
         """Test parsing backend name with unknown executor."""
         provider = BackendMetadataProvider(available_executors=["aer"])
 
         result = provider.parse_backend_name("fake_manila@unknown")
         assert result is None
 
-    def test_parse_backend_name_unknown_metadata(self):
+    def test_parse_backend_name_unknown_metadata(self) -> None:
         """Test parsing backend name with unknown metadata."""
         provider = BackendMetadataProvider(available_executors=["aer"])
 
@@ -47,7 +47,7 @@ class TestParseBackendName:
 class TestListBackends:
     """Tests for list_backends() method."""
 
-    def test_list_backends_single_executor(self):
+    def test_list_backends_single_executor(self) -> None:
         """Test listing backends with single executor."""
         provider = BackendMetadataProvider(available_executors=["aer"])
         response = provider.list_backends()
@@ -62,7 +62,7 @@ class TestListBackends:
         base_count = len(FakeProviderForBackendV2().backends())
         assert len(backend_names) == base_count
 
-    def test_list_backends_multiple_executors(self):
+    def test_list_backends_multiple_executors(self) -> None:
         """Test listing backends with multiple executors."""
         provider = BackendMetadataProvider(available_executors=["aer", "custatevec"])
         response = provider.list_backends()
@@ -77,7 +77,7 @@ class TestListBackends:
         base_count = len(FakeProviderForBackendV2().backends())
         assert len(backend_names) == base_count * 2
 
-    def test_list_backends_contains_metadata(self):
+    def test_list_backends_contains_metadata(self) -> None:
         """Test that listed backends contain proper metadata."""
         provider = BackendMetadataProvider(available_executors=["aer"])
         response = provider.list_backends()
@@ -93,7 +93,7 @@ class TestListBackends:
 class TestSingleton:
     """Tests for singleton pattern."""
 
-    def test_provider_singleton(self):
+    def test_provider_singleton(self) -> None:
         """Test that provider is a singleton."""
         reset_backend_metadata_provider()
 
@@ -106,7 +106,7 @@ class TestSingleton:
         # Should use first call's executors
         assert p1.available_executors == ["aer"]
 
-    def test_provider_reset(self):
+    def test_provider_reset(self) -> None:
         """Test that reset allows new configuration."""
         reset_backend_metadata_provider()
 
@@ -119,7 +119,7 @@ class TestSingleton:
         assert p2.available_executors == ["custatevec"]
         assert p1 is not p2
 
-    def test_provider_default_executor(self):
+    def test_provider_default_executor(self) -> None:
         """Test that default executor is 'aer'."""
         reset_backend_metadata_provider()
 

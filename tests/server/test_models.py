@@ -8,7 +8,7 @@ from qiskit_runtime_server.models import JobInfo, JobStatus
 class TestJobStatus:
     """Tests for JobStatus enum."""
 
-    def test_job_status_values(self):
+    def test_job_status_values(self) -> None:
         """Test that JobStatus enum has all expected values."""
         assert JobStatus.QUEUED == "QUEUED"
         assert JobStatus.RUNNING == "RUNNING"
@@ -16,7 +16,7 @@ class TestJobStatus:
         assert JobStatus.FAILED == "FAILED"
         assert JobStatus.CANCELLED == "CANCELLED"
 
-    def test_job_status_enum(self):
+    def test_job_status_enum(self) -> None:
         """Test that JobStatus is a proper enum."""
         # All status values should be instances of JobStatus
         assert isinstance(JobStatus.QUEUED, JobStatus)
@@ -29,7 +29,7 @@ class TestJobStatus:
 class TestJobInfo:
     """Tests for JobInfo model."""
 
-    def test_job_info_creation(self):
+    def test_job_info_creation(self) -> None:
         """Test creating a JobInfo instance with required fields."""
         info = JobInfo(
             job_id="test-job",
@@ -49,7 +49,7 @@ class TestJobInfo:
         assert info.status == JobStatus.QUEUED
         assert isinstance(info.created_at, datetime)
 
-    def test_job_info_optional_fields(self):
+    def test_job_info_optional_fields(self) -> None:
         """Test that optional fields default to None."""
         info = JobInfo(
             job_id="test-job",
@@ -66,7 +66,7 @@ class TestJobInfo:
         assert info.result_data is None
         assert info.error_message is None
 
-    def test_job_info_with_all_fields(self):
+    def test_job_info_with_all_fields(self) -> None:
         """Test creating a JobInfo with all fields populated."""
         now = datetime.now(UTC)
         started = datetime.now(UTC)
@@ -93,7 +93,7 @@ class TestJobInfo:
         assert info.result_data == {"result": "data"}
         assert info.error_message is None
 
-    def test_job_info_status_transitions(self):
+    def test_job_info_status_transitions(self) -> None:
         """Test that status can be updated."""
         info = JobInfo(
             job_id="test-job",
@@ -116,7 +116,7 @@ class TestJobInfo:
         info.status = JobStatus.COMPLETED
         assert info.status == JobStatus.COMPLETED
 
-    def test_job_info_with_error(self):
+    def test_job_info_with_error(self) -> None:
         """Test JobInfo with error information."""
         info = JobInfo(
             job_id="test-job-failed",

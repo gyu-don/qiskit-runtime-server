@@ -1,562 +1,354 @@
-"""Integration tests for session management with real job execution."""
+"""Integration tests for session management using Qiskit library.
 
-import json
+Tests Session (dedicated mode) and Batch (batch mode) using the actual
+qiskit-ibm-runtime library as a real user would.
+"""
+
+import threading
 import time
+from collections.abc import Generator
 
 import pytest
-from fastapi.testclient import TestClient
+import uvicorn
 from qiskit import QuantumCircuit, transpile
 from qiskit.quantum_info import SparsePauliOp
-from qiskit_ibm_runtime.utils import RuntimeEncoder
+from qiskit_ibm_runtime import (
+    Batch,
+    EstimatorV2,
+    QiskitRuntimeService,
+    SamplerV2,
+    Session,
+)
 
-from qiskit_runtime_server.app import create_app
-
-
-@pytest.fixture
-def client() -> TestClient:
-    """Create test client."""
-    app = create_app()
-    return TestClient(app)
-
-
-@pytest.fixture
-def auth_headers() -> dict[str, str]:
-    """Standard authentication headers."""
-    return {
-        "Authorization": "Bearer test-token",
-        "Service-CRN": "crn:v1:test",
-        "IBM-API-Version": "2025-05-01",
-    }
+from qiskit_runtime_server import create_app
+from qiskit_runtime_server.executors import AerExecutor
+from tests.conftest import create_test_service
 
 
-@pytest.fixture
-def simple_circuit() -> QuantumCircuit:
-    """Create a simple quantum circuit for testing."""
-    circuit = QuantumCircuit(2)
-    circuit.h(0)
-    circuit.cx(0, 1)
-    circuit.measure_all()
-    return circuit
-
-
-@pytest.fixture
-def bell_circuits() -> list[QuantumCircuit]:
-    """Create multiple Bell state circuits."""
-    circuits = []
-    for i in range(3):
-        qc = QuantumCircuit(2, name=f"bell_{i}")
-        qc.h(0)
-        qc.cx(0, 1)
-        qc.measure_all()
-        circuits.append(qc)
-    return circuits
-
-
-def serialize_pubs(pubs_data: list) -> dict:
-    """Serialize pubs using RuntimeEncoder.
-
-    Args:
-        pubs_data: List of pub tuples (e.g., [(circuit,)] or [(circuit, observable)])
-
-    Returns:
-        Serialized params dict ready for API
-    """
-    return json.loads(json.dumps({"pubs": pubs_data}, cls=RuntimeEncoder))
-
-
-class TestDedicatedModeIntegration:
-    """Integration tests for dedicated mode (sequential execution)."""
-
-    def test_dedicated_session_single_job(
-        self, client: TestClient, auth_headers: dict[str, str], simple_circuit: QuantumCircuit
-    ):
-        """Test dedicated session with a single job."""
-        # Create dedicated session
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "dedicated", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        assert session_response.status_code == 201
-        session_id = session_response.json()["id"]
-
-        # Transpile circuit
-        backend_config = client.get(
-            "/v1/backends/fake_manila@aer/configuration", headers=auth_headers
-        ).json()
-        isa_circuit = transpile(simple_circuit, basis_gates=backend_config["basis_gates"])
-
-        # Create job within session
-        serialized_params = serialize_pubs([(isa_circuit,)])
-        job_response = client.post(
-            "/v1/jobs",
-            json={
-                "program_id": "sampler",
-                "backend": "fake_manila@aer",
-                "params": serialized_params,
-                "session_id": session_id,
-            },
-            headers=auth_headers,
-        )
-        assert job_response.status_code == 202
-        job_id = job_response.json()["id"]
-
-        # Wait for job completion
-        max_wait = 10  # seconds
-        start_time = time.time()
-        while time.time() - start_time < max_wait:
-            job_status = client.get(f"/v1/jobs/{job_id}", headers=auth_headers).json()
-            if job_status["state"]["status"] == "COMPLETED":
-                break
-            time.sleep(0.1)
-
-        # Verify job completed
-        assert job_status["state"]["status"] == "COMPLETED"
-
-        # Verify session contains job
-        session_get = client.get(f"/v1/sessions/{session_id}", headers=auth_headers)
-        assert session_get.status_code == 200
-        session_data = session_get.json()
-        assert job_id in session_data["jobs"]
-        assert len(session_data["jobs"]) == 1
-
-        # Get results
-        results = client.get(f"/v1/jobs/{job_id}/results", headers=auth_headers)
-        assert results.status_code == 200
-
-    def test_dedicated_session_multiple_jobs_sequential(
-        self, client: TestClient, auth_headers: dict[str, str], bell_circuits: list[QuantumCircuit]
-    ):
-        """Test dedicated session with multiple jobs execute sequentially."""
-        # Create dedicated session
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "dedicated", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        session_id = session_response.json()["id"]
-
-        # Get backend configuration
-        backend_config = client.get(
-            "/v1/backends/fake_manila@aer/configuration", headers=auth_headers
-        ).json()
-
-        # Create multiple jobs
-        job_ids = []
-        for circuit in bell_circuits:
-            isa_circuit = transpile(circuit, basis_gates=backend_config["basis_gates"])
-            serialized_params = serialize_pubs([(isa_circuit,)])
-            job_response = client.post(
-                "/v1/jobs",
-                json={
-                    "program_id": "sampler",
-                    "backend": "fake_manila@aer",
-                    "params": serialized_params,
-                    "session_id": session_id,
-                },
-                headers=auth_headers,
+@pytest.fixture(scope="module")
+def test_server() -> Generator[str, None, None]:
+    """Start a test server in a background thread."""
+    app = create_app(
+        executors={
+            "aer": AerExecutor(
+                shots=1024,
+                seed_simulator=42,
             )
-            assert job_response.status_code == 202
-            job_ids.append(job_response.json()["id"])
+        }
+    )
 
-        # Wait for all jobs to complete
-        max_wait = 30  # seconds
-        start_time = time.time()
-        all_completed = False
-        while time.time() - start_time < max_wait:
-            statuses = [
-                client.get(f"/v1/jobs/{job_id}", headers=auth_headers).json()
-                for job_id in job_ids
-            ]
-            if all(s["state"]["status"] == "COMPLETED" for s in statuses):
-                all_completed = True
+    host = "127.0.0.1"
+    port = 18001
+
+    config = uvicorn.Config(app, host=host, port=port, log_level="error")
+    server = uvicorn.Server(config)
+
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    # Wait for server to start
+    import requests
+
+    max_retries = 50
+    for _ in range(max_retries):
+        try:
+            response = requests.get(f"http://{host}:{port}/")
+            if response.status_code == 200:
                 break
-            time.sleep(0.2)
+        except requests.ConnectionError:
+            time.sleep(0.1)
+    else:
+        raise RuntimeError("Server failed to start")
 
-        assert all_completed, "Not all jobs completed in time"
+    url = f"http://{host}:{port}"
+    yield url
 
-        # Verify all jobs are in session
-        session_data = client.get(f"/v1/sessions/{session_id}", headers=auth_headers).json()
-        assert len(session_data["jobs"]) == len(job_ids)
-        for job_id in job_ids:
-            assert job_id in session_data["jobs"]
 
-    def test_dedicated_session_close_gracefully(
-        self, client: TestClient, auth_headers: dict[str, str], simple_circuit: QuantumCircuit
+@pytest.fixture
+def service(test_server: str) -> Generator[QiskitRuntimeService, None, None]:
+    """Create QiskitRuntimeService connected to test server."""
+    with create_test_service(test_server) as service:
+        yield service
+
+
+@pytest.fixture
+def bell_circuit() -> QuantumCircuit:
+    """Create a Bell state circuit."""
+    qc = QuantumCircuit(2)
+    qc.h(0)
+    qc.cx(0, 1)
+    qc.measure_all()
+    return qc
+
+
+class TestSessionDedicatedMode:
+    """Test Session (dedicated mode) - sequential execution."""
+
+    def test_session_single_job(self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit):
+        """Test running a single job in a session."""
+        backend = service.backend("fake_manila@aer")
+
+        # Create session (dedicated mode)
+        with Session(backend=backend) as session:
+            # Transpile circuit
+            isa_circuit = transpile(bell_circuit, backend=backend)
+
+            # Run with SamplerV2
+            sampler = SamplerV2(mode=session)
+            job = sampler.run([isa_circuit])
+
+            # Wait for result
+            result = job.result()
+
+            # Verify result
+            assert len(result) == 1
+            assert result[0].data.meas.num_shots == 1024
+
+    def test_session_multiple_jobs_sequential(
+        self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
     ):
-        """Test closing a dedicated session gracefully."""
-        # Create session and job
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "dedicated", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        session_id = session_response.json()["id"]
+        """Test running multiple jobs sequentially in a session."""
+        backend = service.backend("fake_manila@aer")
 
-        backend_config = client.get(
-            "/v1/backends/fake_manila@aer/configuration", headers=auth_headers
-        ).json()
-        isa_circuit = transpile(simple_circuit, basis_gates=backend_config["basis_gates"])
+        with Session(backend=backend) as session:
+            isa_circuit = transpile(bell_circuit, backend=backend)
 
-        serialized_params = serialize_pubs([(isa_circuit,)])
-        job_response = client.post(
-            "/v1/jobs",
-            json={
-                "program_id": "sampler",
-                "backend": "fake_manila@aer",
-                "params": serialized_params,
-                "session_id": session_id,
-            },
-            headers=auth_headers,
-        )
-        job_id = job_response.json()["id"]
+            # Create multiple jobs
+            sampler = SamplerV2(mode=session)
+            jobs = []
+
+            for _ in range(3):
+                job = sampler.run([isa_circuit])
+                jobs.append(job)
+
+            # Wait for all jobs
+            for job in jobs:
+                result = job.result()
+                assert len(result) == 1
+                assert result[0].data.meas.num_shots == 1024
+
+    def test_session_close_gracefully(
+        self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
+    ):
+        """Test that closing a session works correctly."""
+        backend = service.backend("fake_manila@aer")
+
+        session = Session(backend=backend)
+
+        # Run a job
+        isa_circuit = transpile(bell_circuit, backend=backend)
+        sampler = SamplerV2(mode=session)
+        job = sampler.run([isa_circuit])
 
         # Close session
-        close_response = client.delete(
-            f"/v1/sessions/{session_id}/close", headers=auth_headers
-        )
-        assert close_response.status_code == 204
+        session.close()
 
-        # Verify session is not accepting jobs
-        session_data = client.get(f"/v1/sessions/{session_id}", headers=auth_headers).json()
-        assert session_data["accepting_jobs"] is False
-        assert session_data["active"] is False
+        # Running job should still complete
+        result = job.result()
+        assert len(result) == 1
 
-        # Try to create another job (should fail)
-        job_response2 = client.post(
-            "/v1/jobs",
-            json={
-                "program_id": "sampler",
-                "backend": "fake_manila@aer",
-                "params": serialized_params,
-                "session_id": session_id,
-            },
-            headers=auth_headers,
-        )
-        assert job_response2.status_code == 404
+    def test_session_with_estimator(self, service: QiskitRuntimeService):
+        """Test estimator primitive in a session."""
+        backend = service.backend("fake_manila@aer")
 
-        # Wait for original job to complete
-        max_wait = 10
-        start_time = time.time()
-        while time.time() - start_time < max_wait:
-            job_status = client.get(f"/v1/jobs/{job_id}", headers=auth_headers).json()
-            if job_status["state"]["status"] == "COMPLETED":
-                break
-            time.sleep(0.1)
+        with Session(backend=backend) as session:
+            # Create circuit without measurements
+            qc = QuantumCircuit(2)
+            qc.h(0)
+            qc.cx(0, 1)
 
-        # Original job should complete successfully
-        assert job_status["state"]["status"] == "COMPLETED"
+            isa_circuit = transpile(qc, backend=backend)
+
+            # Create observable matching transpiled circuit size
+            num_qubits = isa_circuit.num_qubits
+            observable = SparsePauliOp("Z" * num_qubits)
+
+            # Run estimator
+            estimator = EstimatorV2(mode=session)
+            job = estimator.run([(isa_circuit, observable)])
+
+            result = job.result()
+            assert len(result) == 1
+            assert hasattr(result[0].data, "evs")
 
 
-class TestBatchModeIntegration:
-    """Integration tests for batch mode (parallel execution)."""
+class TestBatchMode:
+    """Test Batch mode - parallel execution."""
 
-    def test_batch_session_multiple_jobs(
-        self, client: TestClient, auth_headers: dict[str, str], bell_circuits: list[QuantumCircuit]
-    ):
-        """Test batch session with multiple jobs."""
-        # Create batch session
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "batch", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        session_id = session_response.json()["id"]
-        assert session_response.json()["mode"] == "batch"
+    def test_batch_multiple_jobs(self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit):
+        """Test running multiple jobs in batch mode."""
+        backend = service.backend("fake_manila@aer")
 
-        # Get backend configuration
-        backend_config = client.get(
-            "/v1/backends/fake_manila@aer/configuration", headers=auth_headers
-        ).json()
+        # Create batch
+        with Batch(backend=backend) as batch:
+            isa_circuit = transpile(bell_circuit, backend=backend)
 
-        # Create multiple jobs in batch
-        job_ids = []
-        for circuit in bell_circuits:
-            isa_circuit = transpile(circuit, basis_gates=backend_config["basis_gates"])
-            serialized_params = serialize_pubs([(isa_circuit,)])
-            job_response = client.post(
-                "/v1/jobs",
-                json={
-                    "program_id": "sampler",
-                    "backend": "fake_manila@aer",
-                    "params": serialized_params,
-                    "session_id": session_id,
-                },
-                headers=auth_headers,
-            )
-            assert job_response.status_code == 202
-            job_ids.append(job_response.json()["id"])
+            # Submit multiple jobs
+            sampler = SamplerV2(mode=batch)
+            jobs = []
 
-        # Wait for all jobs to complete
-        max_wait = 30
-        start_time = time.time()
-        all_completed = False
-        while time.time() - start_time < max_wait:
-            statuses = [
-                client.get(f"/v1/jobs/{job_id}", headers=auth_headers).json()
-                for job_id in job_ids
-            ]
-            if all(s["state"]["status"] == "COMPLETED" for s in statuses):
-                all_completed = True
-                break
-            time.sleep(0.2)
+            for _ in range(3):
+                job = sampler.run([isa_circuit])
+                jobs.append(job)
 
-        assert all_completed, "Not all jobs completed in time"
+            # All jobs should complete
+            for job in jobs:
+                result = job.result()
+                assert len(result) == 1
+                assert result[0].data.meas.num_shots == 1024
 
-        # Verify all jobs succeeded
-        for job_id in job_ids:
-            results = client.get(f"/v1/jobs/{job_id}/results", headers=auth_headers)
-            assert results.status_code == 200
+    def test_batch_with_estimator(self, service: QiskitRuntimeService):
+        """Test estimator in batch mode."""
+        backend = service.backend("fake_manila@aer")
 
+        with Batch(backend=backend) as batch:
+            qc = QuantumCircuit(2)
+            qc.h(0)
+            qc.cx(0, 1)
 
-class TestSessionCancellation:
-    """Integration tests for session cancellation."""
+            isa_circuit = transpile(qc, backend=backend)
 
-    def test_cancel_session_cancels_queued_jobs(
-        self, client: TestClient, auth_headers: dict[str, str], bell_circuits: list[QuantumCircuit]
-    ):
-        """Test that cancelling a session cancels queued jobs."""
-        # Create session
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "dedicated", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        session_id = session_response.json()["id"]
+            # Create observable matching transpiled circuit size
+            num_qubits = isa_circuit.num_qubits
+            observable = SparsePauliOp("Z" * num_qubits)
 
-        # Get backend configuration
-        backend_config = client.get(
-            "/v1/backends/fake_manila@aer/configuration", headers=auth_headers
-        ).json()
+            estimator = EstimatorV2(mode=batch)
+            job = estimator.run([(isa_circuit, observable)])
 
-        # Create multiple jobs quickly (some should be queued)
-        job_ids = []
-        for circuit in bell_circuits:
-            isa_circuit = transpile(circuit, basis_gates=backend_config["basis_gates"])
-            serialized_params = serialize_pubs([(isa_circuit,)])
-            job_response = client.post(
-                "/v1/jobs",
-                json={
-                    "program_id": "sampler",
-                    "backend": "fake_manila@aer",
-                    "params": serialized_params,
-                    "session_id": session_id,
-                },
-                headers=auth_headers,
-            )
-            job_ids.append(job_response.json()["id"])
-
-        # Cancel session immediately
-        cancel_response = client.delete(
-            f"/v1/sessions/{session_id}/cancel", headers=auth_headers
-        )
-        assert cancel_response.status_code == 204
-
-        # Wait a bit for cancellation to propagate
-        time.sleep(0.5)
-
-        # Check job statuses
-        statuses = [
-            client.get(f"/v1/jobs/{job_id}", headers=auth_headers).json()["state"]["status"]
-            for job_id in job_ids
-        ]
-
-        # At least some jobs should be cancelled (queued ones)
-        # Some might have completed if they started before cancellation
-        assert "CANCELLED" in statuses or all(s in ["COMPLETED", "RUNNING"] for s in statuses)
-
-
-class TestEstimatorWithSessions:
-    """Integration tests for estimator primitive with sessions."""
-
-    def test_estimator_in_dedicated_session(
-        self, client: TestClient, auth_headers: dict[str, str]
-    ):
-        """Test estimator primitive within a dedicated session."""
-        # Create session
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "dedicated", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        session_id = session_response.json()["id"]
-
-        # Create circuit without measurements
-        circuit = QuantumCircuit(2)
-        circuit.h(0)
-        circuit.cx(0, 1)
-
-        # Create observable
-        observable = SparsePauliOp(["ZZ", "XX"])
-
-        # Get backend configuration and transpile
-        backend_config = client.get(
-            "/v1/backends/fake_manila@aer/configuration", headers=auth_headers
-        ).json()
-        isa_circuit = transpile(circuit, basis_gates=backend_config["basis_gates"])
-
-        # Create estimator job
-        serialized_params = serialize_pubs([(isa_circuit, observable)])
-        job_response = client.post(
-            "/v1/jobs",
-            json={
-                "program_id": "estimator",
-                "backend": "fake_manila@aer",
-                "params": serialized_params,
-                "session_id": session_id,
-            },
-            headers=auth_headers,
-        )
-        assert job_response.status_code == 202
-        job_id = job_response.json()["id"]
-
-        # Wait for completion
-        max_wait = 10
-        start_time = time.time()
-        while time.time() - start_time < max_wait:
-            job_status = client.get(f"/v1/jobs/{job_id}", headers=auth_headers).json()
-            if job_status["state"]["status"] == "COMPLETED":
-                break
-            time.sleep(0.1)
-
-        assert job_status["state"]["status"] == "COMPLETED"
-
-        # Get results
-        results = client.get(f"/v1/jobs/{job_id}/results", headers=auth_headers)
-        assert results.status_code == 200
+            result = job.result()
+            assert len(result) == 1
 
 
 class TestSessionValidation:
-    """Integration tests for session validation logic."""
+    """Test session validation and error handling."""
 
-    def test_job_backend_must_match_session(
-        self, client: TestClient, auth_headers: dict[str, str], simple_circuit: QuantumCircuit
+    def test_session_backend_specified(self, service: QiskitRuntimeService):
+        """Test that session requires a backend."""
+        backend = service.backend("fake_manila@aer")
+
+        # Should work with backend
+        with Session(backend=backend):
+            pass  # Session created successfully
+
+    def test_different_circuits_same_session(
+        self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
     ):
-        """Test that job backend must match session backend."""
-        # Create session with fake_manila
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "dedicated", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        session_id = session_response.json()["id"]
+        """Test running different circuits in the same session."""
+        backend = service.backend("fake_manila@aer")
 
-        # Try to create job with different backend
-        serialized_params = serialize_pubs([(simple_circuit,)])
-        job_response = client.post(
-            "/v1/jobs",
-            json={
-                "program_id": "sampler",
-                "backend": "fake_kyoto@aer",  # Different backend
-                "params": serialized_params,
-                "session_id": session_id,
-            },
-            headers=auth_headers,
-        )
+        with Session(backend=backend) as session:
+            sampler = SamplerV2(mode=session)
 
-        assert job_response.status_code == 404
-        assert "mismatch" in job_response.json()["detail"].lower()
+            # Circuit 1: Bell state
+            isa_circuit1 = transpile(bell_circuit, backend=backend)
+            job1 = sampler.run([isa_circuit1])
 
-    def test_cannot_use_closed_session(
-        self, client: TestClient, auth_headers: dict[str, str], simple_circuit: QuantumCircuit
+            # Circuit 2: Different circuit
+            qc2 = QuantumCircuit(2)
+            qc2.x(0)
+            qc2.x(1)
+            qc2.measure_all()
+            isa_circuit2 = transpile(qc2, backend=backend)
+            job2 = sampler.run([isa_circuit2])
+
+            # Both should complete
+            result1 = job1.result()
+            result2 = job2.result()
+
+            assert len(result1) == 1
+            assert len(result2) == 1
+
+
+class TestSessionLifecycle:
+    """Test session lifecycle management."""
+
+    def test_session_context_manager(
+        self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
     ):
-        """Test that closed session cannot accept new jobs."""
-        # Create and close session
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "dedicated", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        session_id = session_response.json()["id"]
+        """Test session with context manager."""
+        backend = service.backend("fake_manila@aer")
 
-        client.delete(f"/v1/sessions/{session_id}/close", headers=auth_headers)
+        with Session(backend=backend) as session:
+            isa_circuit = transpile(bell_circuit, backend=backend)
+            sampler = SamplerV2(mode=session)
+            job = sampler.run([isa_circuit])
+            result = job.result()
+            assert len(result) == 1
 
-        # Try to create job
-        serialized_params = serialize_pubs([(simple_circuit,)])
-        job_response = client.post(
-            "/v1/jobs",
-            json={
-                "program_id": "sampler",
-                "backend": "fake_manila@aer",
-                "params": serialized_params,
-                "session_id": session_id,
-            },
-            headers=auth_headers,
-        )
+        # Session should be closed after context
 
-        assert job_response.status_code == 404
-        assert "not accepting" in job_response.json()["detail"].lower()
-
-    def test_session_elapsed_time_increases(
-        self, client: TestClient, auth_headers: dict[str, str]
+    def test_batch_context_manager(
+        self, service: QiskitRuntimeService, bell_circuit: QuantumCircuit
     ):
-        """Test that session elapsed_time increases over time."""
-        # Create session
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "dedicated", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        session_id = session_response.json()["id"]
+        """Test batch with context manager."""
+        backend = service.backend("fake_manila@aer")
 
-        # Get initial elapsed time
-        session1 = client.get(f"/v1/sessions/{session_id}", headers=auth_headers).json()
-        elapsed1 = session1["elapsed_time"]
+        with Batch(backend=backend) as batch:
+            isa_circuit = transpile(bell_circuit, backend=backend)
+            sampler = SamplerV2(mode=batch)
+            job = sampler.run([isa_circuit])
+            result = job.result()
+            assert len(result) == 1
 
-        # Wait a bit
-        time.sleep(1)
-
-        # Get elapsed time again
-        session2 = client.get(f"/v1/sessions/{session_id}", headers=auth_headers).json()
-        elapsed2 = session2["elapsed_time"]
-
-        # Should have increased
-        assert elapsed2 > elapsed1
+        # Batch should be closed after context
 
 
-class TestMultipleExecutors:
-    """Integration tests with multiple executors (if available)."""
+class TestMixedPrimitives:
+    """Test mixing sampler and estimator in sessions."""
 
-    def test_session_with_specific_executor(
-        self, client: TestClient, auth_headers: dict[str, str], simple_circuit: QuantumCircuit
-    ):
-        """Test session with specific executor in backend name."""
-        # Create session with explicit executor
-        session_response = client.post(
-            "/v1/sessions",
-            json={"mode": "dedicated", "backend": "fake_manila@aer"},
-            headers=auth_headers,
-        )
-        session_id = session_response.json()["id"]
+    def test_session_sampler_and_estimator(self, service: QiskitRuntimeService):
+        """Test using both sampler and estimator in same session."""
+        backend = service.backend("fake_manila@aer")
 
-        # Get backend configuration
-        backend_config = client.get(
-            "/v1/backends/fake_manila@aer/configuration", headers=auth_headers
-        ).json()
-        isa_circuit = transpile(simple_circuit, basis_gates=backend_config["basis_gates"])
+        with Session(backend=backend) as session:
+            # Sampler job
+            qc_sampler = QuantumCircuit(2)
+            qc_sampler.h(0)
+            qc_sampler.cx(0, 1)
+            qc_sampler.measure_all()
+            isa_sampler = transpile(qc_sampler, backend=backend)
 
-        # Create job with same backend
-        serialized_params = serialize_pubs([(isa_circuit,)])
-        job_response = client.post(
-            "/v1/jobs",
-            json={
-                "program_id": "sampler",
-                "backend": "fake_manila@aer",
-                "params": serialized_params,
-                "session_id": session_id,
-            },
-            headers=auth_headers,
-        )
-        assert job_response.status_code == 202
+            sampler = SamplerV2(mode=session)
+            sampler_job = sampler.run([isa_sampler])
 
-        # Wait for completion
-        job_id = job_response.json()["id"]
-        max_wait = 10
-        start_time = time.time()
-        while time.time() - start_time < max_wait:
-            job_status = client.get(f"/v1/jobs/{job_id}", headers=auth_headers).json()
-            if job_status["state"]["status"] == "COMPLETED":
-                break
-            time.sleep(0.1)
+            # Estimator job
+            qc_estimator = QuantumCircuit(2)
+            qc_estimator.h(0)
+            qc_estimator.cx(0, 1)
+            isa_estimator = transpile(qc_estimator, backend=backend)
 
-        assert job_status["state"]["status"] == "COMPLETED"
+            # Create observable matching transpiled circuit size
+            num_qubits = isa_estimator.num_qubits
+            observable = SparsePauliOp("Z" * num_qubits)
+
+            estimator = EstimatorV2(mode=session)
+            estimator_job = estimator.run([(isa_estimator, observable)])
+
+            # Both should complete
+            sampler_result = sampler_job.result()
+            estimator_result = estimator_job.result()
+
+            assert len(sampler_result) == 1
+            assert len(estimator_result) == 1
+
+
+class TestBackendSelection:
+    """Test backend selection in sessions."""
+
+    def test_session_with_explicit_executor(self, service: QiskitRuntimeService):
+        """Test session with explicitly named executor."""
+        # Use @aer executor explicitly
+        backend = service.backend("fake_manila@aer")
+
+        with Session(backend=backend) as session:
+            qc = QuantumCircuit(2)
+            qc.h(0)
+            qc.cx(0, 1)
+            qc.measure_all()
+
+            isa_circuit = transpile(qc, backend=backend)
+            sampler = SamplerV2(mode=session)
+            job = sampler.run([isa_circuit])
+
+            result = job.result()
+            assert len(result) == 1

@@ -5,14 +5,14 @@ import logging
 import queue
 import threading
 from datetime import UTC, datetime
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from qiskit_ibm_runtime.utils import RuntimeDecoder
 
 from ..executors.base import BaseExecutor
 from ..models import JobInfo, JobStatus
-from ..providers.backend_metadata import get_backend_metadata_provider, BackendMetadataProvider
+from ..providers.backend_metadata import BackendMetadataProvider, get_backend_metadata_provider
 
 if TYPE_CHECKING:
     from ..managers import SessionManager
@@ -31,7 +31,9 @@ class JobManager:
     - Thread-safe job state management
     """
 
-    def __init__(self, executors: dict[str, BaseExecutor], session_manager: "SessionManager | None" = None):
+    def __init__(
+        self, executors: dict[str, BaseExecutor], session_manager: "SessionManager | None" = None
+    ):
         """
         Initialize job manager with executors.
 

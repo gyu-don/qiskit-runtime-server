@@ -2,7 +2,6 @@
 
 import json
 import time
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -142,7 +141,7 @@ class TestJobsEndpoint:
     """Test jobs endpoints."""
 
     @pytest.fixture
-    def client(self) -> Any:
+    def client(self) -> TestClient:
         """Create test client."""
         app = create_app(executors={"aer": AerExecutor()})
         return TestClient(app)
@@ -156,7 +155,9 @@ class TestJobsEndpoint:
         circuit.measure_all()
         return circuit
 
-    def test_create_job_returns_202(self, client: Any, simple_circuit: QuantumCircuit) -> None:
+    def test_create_job_returns_202(
+        self, client: TestClient, simple_circuit: QuantumCircuit
+    ) -> None:
         """Test POST /v1/jobs returns 202 Accepted."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]
@@ -179,7 +180,9 @@ class TestJobsEndpoint:
         assert "backend" in data
         assert data["backend"] == "fake_manila@aer"
 
-    def test_create_job_invalid_backend(self, client: Any, simple_circuit: QuantumCircuit) -> None:
+    def test_create_job_invalid_backend(
+        self, client: TestClient, simple_circuit: QuantumCircuit
+    ) -> None:
         """Test creating job with invalid backend name."""
         # No @executor
         response = client.post(
@@ -217,7 +220,7 @@ class TestJobsEndpoint:
         )
         assert response.status_code == 404
 
-    def test_get_job_status(self, client: Any, simple_circuit: QuantumCircuit) -> None:
+    def test_get_job_status(self, client: TestClient, simple_circuit: QuantumCircuit) -> None:
         """Test GET /v1/jobs/{job_id}."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]
@@ -245,12 +248,14 @@ class TestJobsEndpoint:
         assert "state" in data
         assert data["state"]["status"] in [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.COMPLETED]
 
-    def test_get_job_status_not_found(self, client: Any) -> None:
+    def test_get_job_status_not_found(self, client: TestClient) -> None:
         """Test getting status of non-existent job."""
         response = client.get("/v1/jobs/non-existent-job")
         assert response.status_code == 404
 
-    def test_get_job_results_success(self, client: Any, simple_circuit: QuantumCircuit) -> None:
+    def test_get_job_results_success(
+        self, client: TestClient, simple_circuit: QuantumCircuit
+    ) -> None:
         """Test GET /v1/jobs/{job_id}/results for successful job."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]
@@ -290,7 +295,7 @@ class TestJobsEndpoint:
         # or pub_results and metadata fields
         assert "__type__" in data or "pub_results" in data
 
-    def test_get_job_results_not_completed(self, client: Any) -> None:
+    def test_get_job_results_not_completed(self, client: TestClient) -> None:
         """Test GET /v1/jobs/{job_id}/results returns 400 for non-completed job."""
         # Create a simple circuit
         circuit = QuantumCircuit(1)
@@ -324,7 +329,7 @@ class TestJobsEndpoint:
             # Verify error message indicates job is not completed
             assert "not completed" in response.json()["detail"].lower()
 
-    def test_cancel_job(self, client: Any, simple_circuit: QuantumCircuit) -> None:
+    def test_cancel_job(self, client: TestClient, simple_circuit: QuantumCircuit) -> None:
         """Test DELETE /v1/jobs/{job_id}."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]
@@ -347,7 +352,7 @@ class TestJobsEndpoint:
         # Either 200 (cancelled) or 400 (already running/completed)
         assert response.status_code in [200, 400]
 
-    def test_job_lifecycle(self, client: Any, simple_circuit: QuantumCircuit) -> None:
+    def test_job_lifecycle(self, client: TestClient, simple_circuit: QuantumCircuit) -> None:
         """Test full job lifecycle: create → status → results."""
         # Serialize circuit using RuntimeEncoder
         pubs_data = [(simple_circuit,)]

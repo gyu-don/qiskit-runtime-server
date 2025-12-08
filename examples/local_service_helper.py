@@ -8,10 +8,18 @@ Usage:
     # Copy this file to your project, then:
     from local_service_helper import local_service_connection
 
+    # Localhost
     with local_service_connection("http://localhost:8000") as service:
         backends = service.backends()
         backend = service.backend("fake_manila@aer")
-        # ... use service normally
+
+    # LAN deployment
+    with local_service_connection("http://192.168.1.100:8000") as service:
+        backends = service.backends()
+
+    # Custom domain
+    with local_service_connection("http://quantum.local:8000") as service:
+        backends = service.backends()
 
 WARNING: These utilities bypass IBM Cloud authentication and should only be used
 for local development and testing with self-hosted servers.
@@ -24,6 +32,45 @@ from unittest.mock import patch
 from qiskit_ibm_runtime import QiskitRuntimeService
 
 
+def _is_local_or_custom_server(url: str) -> bool:
+    """Check if URL points to local/custom server (not IBM Cloud).
+
+    Returns True for:
+    - localhost/127.0.0.1
+    - Private IP ranges (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+    - Custom domains (e.g., quantum.local, my-server.dev)
+    - Any non-IBM Cloud endpoint
+
+    Returns False for:
+    - IBM Cloud endpoints (cloud.ibm.com, quantum-computing.ibm.com)
+
+    Args:
+        url: Server URL to check
+
+    Returns:
+        True if URL is local/custom server, False if IBM Cloud endpoint
+    """
+    if not url:
+        return False
+
+    url_lower = url.lower()
+
+    # IBM Cloud endpoints should use original authentication
+    ibm_cloud_domains = [
+        "cloud.ibm.com",
+        "quantum-computing.ibm.com",
+        "quantum.ibm.com",
+    ]
+
+    # Return True if NOT an IBM Cloud domain
+    # This includes all local/custom servers:
+    # - localhost, 127.0.0.1
+    # - Private IPs (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+    # - Custom domains (quantum.local, my-server.dev, etc.)
+    # - LAN servers (http://192.168.1.100:8000)
+    return not any(domain in url_lower for domain in ibm_cloud_domains)
+
+
 @contextmanager
 def local_service_connection(
     url: str,
@@ -34,24 +81,38 @@ def local_service_connection(
     """Create QiskitRuntimeService connected to local server with auth patching.
 
     This context manager patches the IBM Cloud authentication flow to allow
-    connecting to a local server without IBM Cloud credentials.
+    connecting to a local or custom server without IBM Cloud credentials.
+
+    Supports:
+    - Localhost: http://localhost:8000, http://127.0.0.1:8000
+    - LAN deployment: http://192.168.1.100:8000
+    - Custom domains: http://quantum.local:8000, http://my-server.dev:8000
 
     Args:
-        url: Local server URL (e.g., "http://localhost:8000")
+        url: Local/custom server URL
         token: Mock token (not validated by local server)
         instance: Mock CRN instance identifier
-        verify: SSL verification (typically False for localhost)
+        verify: SSL verification (typically False for local servers)
 
     Yields:
         QiskitRuntimeService: Configured service instance
 
     Example:
+        >>> # Localhost
         >>> with local_service_connection("http://localhost:8000") as service:
         ...     backends = service.backends()
         ...     backend = service.backend("fake_manila@aer")
         ...     sampler = SamplerV2(mode=backend)
         ...     job = sampler.run([circuit])
         ...     result = job.result()
+        >>>
+        >>> # LAN deployment
+        >>> with local_service_connection("http://192.168.1.100:8000") as service:
+        ...     backends = service.backends()
+        >>>
+        >>> # Custom domain
+        >>> with local_service_connection("http://quantum.local:8000") as service:
+        ...     backends = service.backends()
     """
     from qiskit_ibm_runtime.accounts.account import CloudAccount
     from qiskit_ibm_runtime.api.auth import CloudAuth
@@ -60,9 +121,9 @@ def local_service_connection(
     original_list_instances = CloudAccount.list_instances
 
     def patched_list_instances(self) -> list[dict[str, Any]]:
-        """Return mock instance data for local testing."""
-        # Check if URL is localhost/127.0.0.1
-        if self.url and ("127.0.0.1" in self.url or "localhost" in self.url):
+        """Return mock instance data for local/custom server testing."""
+        # Check if URL is local/custom server (not IBM Cloud)
+        if _is_local_or_custom_server(self.url):
             return [
                 {
                     "crn": instance,
@@ -70,7 +131,7 @@ def local_service_connection(
                     "name": "test-instance",
                 }
             ]
-        # Otherwise use original implementation
+        # Otherwise use original implementation for IBM Cloud
         return original_list_instances(self)
 
     # Patch CloudAuth to bypass IAM authentication
@@ -129,17 +190,27 @@ def create_local_service(
     WARNING: This function applies monkey-patches globally and permanently.
     Prefer using `local_service_connection()` context manager instead.
 
+    Supports:
+    - Localhost: http://localhost:8000, http://127.0.0.1:8000
+    - LAN deployment: http://192.168.1.100:8000
+    - Custom domains: http://quantum.local:8000, http://my-server.dev:8000
+
     Args:
-        url: Local server URL (e.g., "http://localhost:8000")
+        url: Local/custom server URL
         token: Mock token (not validated by local server)
         instance: Mock CRN instance identifier
-        verify: SSL verification (typically False for localhost)
+        verify: SSL verification (typically False for local servers)
 
     Returns:
         QiskitRuntimeService: Configured service instance
 
     Example:
+        >>> # Localhost
         >>> service = create_local_service("http://localhost:8000")
+        >>> backends = service.backends()
+        >>>
+        >>> # LAN deployment
+        >>> service = create_local_service("http://192.168.1.100:8000")
         >>> backends = service.backends()
     """
     from qiskit_ibm_runtime.accounts.account import CloudAccount
@@ -151,9 +222,9 @@ def create_local_service(
 
     # Monkey-patch CloudAccount.list_instances
     def patched_list_instances(self) -> list[dict[str, Any]]:
-        """Return mock instance data for local testing."""
-        # Check if URL is localhost/127.0.0.1
-        if self.url and ("127.0.0.1" in self.url or "localhost" in self.url):
+        """Return mock instance data for local/custom server testing."""
+        # Check if URL is local/custom server (not IBM Cloud)
+        if _is_local_or_custom_server(self.url):
             return [
                 {
                     "crn": instance,
@@ -161,7 +232,7 @@ def create_local_service(
                     "name": "test-instance",
                 }
             ]
-        # Otherwise use original implementation
+        # Otherwise use original implementation for IBM Cloud
         return original_list_instances(self)
 
     CloudAccount.list_instances = patched_list_instances

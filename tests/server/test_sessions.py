@@ -26,7 +26,7 @@ def auth_headers() -> dict[str, str]:
 class TestCreateSession:
     """Tests for session creation."""
 
-    def test_create_dedicated_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_create_dedicated_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test creating a dedicated mode session."""
         response = client.post(
             "/v1/sessions",
@@ -49,7 +49,7 @@ class TestCreateSession:
         assert "id" in data
         assert data["id"].startswith("session-")
 
-    def test_create_batch_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_create_batch_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test creating a batch mode session."""
         response = client.post(
             "/v1/sessions",
@@ -67,7 +67,7 @@ class TestCreateSession:
         assert data["backend"] == "fake_manila@aer"
         assert data["max_ttl"] == 7200
 
-    def test_create_session_with_instance(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_create_session_with_instance(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test creating a session with instance CRN."""
         response = client.post(
             "/v1/sessions",
@@ -83,7 +83,7 @@ class TestCreateSession:
         data = response.json()
         assert data["instance"] == "crn:v1:bluemix:public:quantum-computing:us-east:a/test::test"
 
-    def test_create_session_invalid_backend(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_create_session_invalid_backend(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test creating a session with invalid backend."""
         response = client.post(
             "/v1/sessions",
@@ -101,7 +101,7 @@ class TestCreateSession:
 class TestGetSession:
     """Tests for retrieving session information."""
 
-    def test_get_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_get_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test getting session details."""
         # Create session
         create_response = client.post(
@@ -120,7 +120,7 @@ class TestGetSession:
         assert data["mode"] == "dedicated"
         assert "elapsed_time" in data
 
-    def test_get_nonexistent_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_get_nonexistent_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test getting a nonexistent session."""
         response = client.get("/v1/sessions/session-nonexistent", headers=auth_headers)
 
@@ -131,7 +131,7 @@ class TestGetSession:
 class TestUpdateSession:
     """Tests for updating session settings."""
 
-    def test_update_accepting_jobs(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_update_accepting_jobs(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test updating accepting_jobs flag."""
         # Create session
         create_response = client.post(
@@ -152,7 +152,7 @@ class TestUpdateSession:
         data = response.json()
         assert data["accepting_jobs"] is False
 
-    def test_update_nonexistent_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_update_nonexistent_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test updating a nonexistent session."""
         response = client.patch(
             "/v1/sessions/session-nonexistent",
@@ -166,7 +166,7 @@ class TestUpdateSession:
 class TestCloseSession:
     """Tests for closing sessions."""
 
-    def test_close_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_close_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test closing a session gracefully."""
         # Create session
         create_response = client.post(
@@ -188,7 +188,7 @@ class TestCloseSession:
         assert data["accepting_jobs"] is False
         assert data["active"] is False
 
-    def test_close_nonexistent_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_close_nonexistent_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test closing a nonexistent session."""
         response = client.delete("/v1/sessions/session-nonexistent/close", headers=auth_headers)
 
@@ -198,7 +198,7 @@ class TestCloseSession:
 class TestCancelSession:
     """Tests for cancelling sessions."""
 
-    def test_cancel_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_cancel_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test cancelling a session."""
         # Create session
         create_response = client.post(
@@ -220,7 +220,7 @@ class TestCancelSession:
         assert data["accepting_jobs"] is False
         assert data["active"] is False
 
-    def test_cancel_nonexistent_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_cancel_nonexistent_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test cancelling a nonexistent session."""
         response = client.delete("/v1/sessions/session-nonexistent/cancel", headers=auth_headers)
 
@@ -230,7 +230,7 @@ class TestCancelSession:
 class TestSessionJobIntegration:
     """Tests for session-job integration."""
 
-    def test_create_job_with_session(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_create_job_with_session(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test creating a job associated with a session."""
         # Create session
         session_response = client.post(
@@ -263,7 +263,7 @@ class TestSessionJobIntegration:
 
     def test_create_job_with_nonexistent_session(
         self, client: TestClient, auth_headers: dict[str, str]
-    ):
+    ) -> None:
         """Test creating a job with nonexistent session."""
         job_response = client.post(
             "/v1/jobs",
@@ -279,7 +279,7 @@ class TestSessionJobIntegration:
         assert job_response.status_code == 404
         assert "not found" in job_response.json()["detail"].lower()
 
-    def test_create_job_backend_mismatch(self, client: TestClient, auth_headers: dict[str, str]):
+    def test_create_job_backend_mismatch(self, client: TestClient, auth_headers: dict[str, str]) -> None:
         """Test creating a job with backend that doesn't match session backend."""
         # Create session with fake_manila
         session_response = client.post(
@@ -306,7 +306,7 @@ class TestSessionJobIntegration:
 
     def test_create_job_session_not_accepting(
         self, client: TestClient, auth_headers: dict[str, str]
-    ):
+    ) -> None:
         """Test creating a job when session is not accepting jobs."""
         # Create session
         session_response = client.post(

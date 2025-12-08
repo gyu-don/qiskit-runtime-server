@@ -28,18 +28,22 @@ class JobManager:
     - Thread-safe job state management
     """
 
-    def __init__(self, executors: dict[str, BaseExecutor]):
+    def __init__(
+        self, executors: dict[str, BaseExecutor], session_manager: Any | None = None
+    ):
         """
         Initialize job manager with executors.
 
         Args:
             executors: Mapping of executor name to executor instance
                       Example: {"aer": AerExecutor(), "custatevec": CuStateVecExecutor()}
+            session_manager: Optional SessionManager for session-aware job execution
         """
         self.executors = executors
         self.jobs: dict[str, JobInfo] = {}
         self._lock = threading.Lock()
         self._metadata_provider: Any = None
+        self._session_manager = session_manager
 
         # Job queue (FIFO)
         self._queue: queue.Queue[str] = queue.Queue()
@@ -107,6 +111,7 @@ class JobManager:
         backend_name: str,
         params: dict[str, Any],
         options: dict[str, Any] | None = None,
+        session_id: str | None = None,
     ) -> str:
         """
         Create a new job and add it to the queue.
@@ -116,17 +121,36 @@ class JobManager:
             backend_name: Backend name in "metadata@executor" format
             params: Job parameters (pubs, etc.)
             options: Execution options
+            session_id: Optional session ID for session-aware execution
 
         Returns:
             Job ID
 
         Raises:
-            ValueError: If backend_name format is invalid
+            ValueError: If backend_name format is invalid or session validation fails
         """
         # Validate backend name early
         parsed = self.metadata_provider.parse_backend_name(backend_name)
         if parsed is None:
             raise ValueError(f"Invalid backend name: {backend_name}")
+
+        # Validate session if provided
+        if session_id is not None and self._session_manager is not None:
+            # Check if session exists
+            session_info = self._session_manager.get_session(session_id)
+            if session_info is None:
+                raise ValueError(f"Session not found: {session_id}")
+
+            # Validate backend matches session backend
+            if not self._session_manager.validate_job_backend(session_id, backend_name):
+                raise ValueError(
+                    f"Backend mismatch: job backend '{backend_name}' "
+                    f"does not match session backend '{session_info.backend_name}'"
+                )
+
+            # Check if session is accepting jobs
+            if not session_info.accepting_jobs:
+                raise ValueError(f"Session {session_id} is not accepting new jobs")
 
         # Generate job ID
         job_id = f"job-{uuid4()}"
@@ -138,6 +162,7 @@ class JobManager:
             backend_name=backend_name,
             params=params,
             options=options or {},
+            session_id=session_id,
             status=JobStatus.QUEUED,
             created_at=datetime.now(UTC),
         )
@@ -146,10 +171,26 @@ class JobManager:
         with self._lock:
             self.jobs[job_id] = job_info
 
+        # Add job to session if provided
+        if (
+            session_id is not None
+            and self._session_manager is not None
+            and not self._session_manager.add_job_to_session(session_id, job_id)
+        ):
+            # Failed to add to session - clean up job
+            with self._lock:
+                del self.jobs[job_id]
+            raise ValueError(f"Failed to add job to session {session_id}")
+
         # Add to queue
         self._queue.put(job_id)
 
-        logger.info("Job created and queued: %s (backend: %s)", job_id, backend_name)
+        logger.info(
+            "Job created and queued: %s (backend: %s, session: %s)",
+            job_id,
+            backend_name,
+            session_id or "none",
+        )
         return job_id
 
     def _execute_job(self, job_id: str) -> None:
@@ -299,6 +340,28 @@ class JobManager:
                 return True
 
             return False
+
+    def cancel_session_jobs(self, session_id: str) -> int:
+        """
+        Cancel all queued jobs in a session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Number of jobs cancelled
+        """
+        cancelled_count = 0
+        with self._lock:
+            for job_info in self.jobs.values():
+                if job_info.session_id == session_id and job_info.status == JobStatus.QUEUED:
+                    job_info.status = JobStatus.CANCELLED
+                    job_info.completed_at = datetime.now(UTC)
+                    job_info.error_message = "Cancelled due to session cancellation"
+                    cancelled_count += 1
+
+        logger.info("Cancelled %d jobs from session %s", cancelled_count, session_id)
+        return cancelled_count
 
     def get_queue_length(self, executor_name: str | None = None) -> int:
         """

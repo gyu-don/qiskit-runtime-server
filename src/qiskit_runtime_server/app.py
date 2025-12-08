@@ -12,12 +12,16 @@ from qiskit_ibm_runtime.utils import RuntimeEncoder
 
 from .executors.base import BaseExecutor
 from .managers.job_manager import JobManager
+from .managers.session_manager import SessionManager
 from .models import (
     JobCreateRequest,
     JobCreateResponse,
     JobState,
     JobStatus,
     JobStatusResponse,
+    SessionCreateRequest,
+    SessionResponse,
+    SessionUpdateRequest,
 )
 from .providers.backend_metadata import BackendMetadataProvider
 
@@ -61,7 +65,8 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
     available_executors = list(executors.keys())
 
     # Create managers
-    job_manager = JobManager(executors=executors)
+    session_manager = SessionManager()
+    job_manager = JobManager(executors=executors, session_manager=session_manager)
     metadata_provider = BackendMetadataProvider(available_executors)
 
     # Lifespan context manager for startup/shutdown
@@ -90,6 +95,7 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
 
     # Store managers in app state for access in endpoints
     app.state.job_manager = job_manager
+    app.state.session_manager = session_manager
     app.state.metadata_provider = metadata_provider
 
     # ===== ENDPOINTS =====
@@ -251,6 +257,7 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
                 backend_name=request.backend,
                 params=request.params,
                 options=request.options or {},
+                session_id=request.session_id,
             )
             return JobCreateResponse(id=job_id, backend=request.backend)
         except ValueError as e:
@@ -349,5 +356,126 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
             )
 
         return {"message": "Job cancelled"}
+
+    # ===== SESSION ENDPOINTS =====
+
+    @app.post("/v1/sessions", status_code=201)
+    async def create_session(request: SessionCreateRequest) -> SessionResponse:
+        """
+        Create a new session.
+
+        Sessions group jobs and control execution mode (dedicated/batch).
+
+        Args:
+            request: Session creation request
+
+        Returns:
+            Session information
+
+        Raises:
+            HTTPException: If backend name is invalid
+        """
+        # Validate backend name
+        parsed = metadata_provider.parse_backend_name(request.backend)
+        if not parsed:
+            raise HTTPException(status_code=404, detail=f"Backend {request.backend} not found")
+
+        # Create session
+        session_id = session_manager.create_session(
+            mode=request.mode,
+            backend_name=request.backend,
+            instance=request.instance,
+            max_ttl=request.max_ttl,
+        )
+
+        # Return session response
+        response = session_manager.get_session_response(session_id)
+        if response is None:
+            raise HTTPException(status_code=500, detail="Failed to create session")
+
+        return response
+
+    @app.get("/v1/sessions/{session_id}")
+    async def get_session(session_id: str) -> SessionResponse:
+        """
+        Get session details.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Session information
+
+        Raises:
+            HTTPException: If session not found
+        """
+        response = session_manager.get_session_response(session_id)
+        if response is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return response
+
+    @app.patch("/v1/sessions/{session_id}")
+    async def update_session(session_id: str, request: SessionUpdateRequest) -> SessionResponse:
+        """
+        Update session settings.
+
+        Args:
+            session_id: Session ID
+            request: Session update request
+
+        Returns:
+            Updated session information
+
+        Raises:
+            HTTPException: If session not found
+        """
+        success = session_manager.update_session(session_id, request.accepting_jobs)
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        response = session_manager.get_session_response(session_id)
+        if response is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return response
+
+    @app.delete("/v1/sessions/{session_id}/close", status_code=204)
+    async def close_session(session_id: str) -> None:
+        """
+        Close a session gracefully.
+
+        Stops accepting new jobs but allows running jobs to complete.
+
+        Args:
+            session_id: Session ID
+
+        Raises:
+            HTTPException: If session not found
+        """
+        success = session_manager.close_session(session_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+    @app.delete("/v1/sessions/{session_id}/cancel", status_code=204)
+    async def cancel_session(session_id: str) -> None:
+        """
+        Cancel a session immediately.
+
+        Stops accepting new jobs and cancels all queued jobs.
+
+        Args:
+            session_id: Session ID
+
+        Raises:
+            HTTPException: If session not found
+        """
+        # Cancel the session
+        success = session_manager.cancel_session(session_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Cancel all queued jobs in the session
+        job_manager.cancel_session_jobs(session_id)
 
     return app

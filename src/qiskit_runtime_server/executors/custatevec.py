@@ -7,6 +7,9 @@ cuQuantum installation.
 
 from typing import TYPE_CHECKING, Any
 
+from qiskit.primitives import BackendEstimatorV2, BackendSamplerV2
+from qiskit_aer import AerSimulator
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -14,14 +17,7 @@ if TYPE_CHECKING:
 
 from .base import BaseExecutor
 
-# Check if Aer and cuQuantum are available
-try:
-    from qiskit_aer import AerSimulator  # noqa: F401
-
-    AER_AVAILABLE = True
-except ImportError:
-    AER_AVAILABLE = False
-
+# Check if cuQuantum is available
 try:
     from cuquantum import custatevec  # noqa: F401
 
@@ -64,11 +60,8 @@ class CuStateVecExecutor(BaseExecutor):
             max_parallel_threads: Maximum number of parallel threads (0 = auto).
 
         Raises:
-            ImportError: If Qiskit Aer or cuQuantum is not installed.
+            ImportError: If cuQuantum is not installed.
         """
-        if not AER_AVAILABLE:
-            raise ImportError("Qiskit Aer is not installed. Install with: pip install qiskit-aer")
-
         if not CUSTATEVEC_AVAILABLE:
             raise ImportError(
                 "cuQuantum is not installed. Install with: pip install cuquantum-python"
@@ -84,15 +77,13 @@ class CuStateVecExecutor(BaseExecutor):
         """Return executor name."""
         return "custatevec"
 
-    def _create_simulator(self) -> Any:
+    def _create_simulator(self) -> AerSimulator:
         """
         Create AerSimulator instance with GPU and cuStateVec enabled.
 
         Returns:
             AerSimulator: Configured GPU simulator instance with cuStateVec.
         """
-        from qiskit_aer import AerSimulator
-
         options: dict[str, Any] = {
             "method": "statevector",
             "device": "GPU",
@@ -109,8 +100,7 @@ class CuStateVecExecutor(BaseExecutor):
         if self.device_id > 0:
             options["device_id"] = self.device_id
 
-        simulator = AerSimulator(**options)
-        return simulator
+        return AerSimulator(**options)
 
     def execute_sampler(
         self,
@@ -134,8 +124,6 @@ class CuStateVecExecutor(BaseExecutor):
         Returns:
             PrimitiveResult: Sampler execution result.
         """
-        from qiskit.primitives import BackendSamplerV2
-
         simulator = self._create_simulator()
         sampler = BackendSamplerV2(backend=simulator)
 
@@ -168,8 +156,6 @@ class CuStateVecExecutor(BaseExecutor):
         Returns:
             PrimitiveResult: Estimator execution result.
         """
-        from qiskit.primitives import BackendEstimatorV2
-
         simulator = self._create_simulator()
         estimator = BackendEstimatorV2(backend=simulator)
 

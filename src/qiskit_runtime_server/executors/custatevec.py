@@ -100,8 +100,6 @@ class CuStateVecExecutor(BaseExecutor):
             options["device_id"] = self.device_id
 
         simulator = AerSimulator(**options)
-        # Enable cuStateVec for GPU execution
-        simulator.set_options(cuStateVec_enable=True)
         return simulator
 
     def execute_sampler(
@@ -133,7 +131,7 @@ class CuStateVecExecutor(BaseExecutor):
         shots = options.get("default_shots", self.shots)
 
         # Run sampler on GPU
-        job = sampler.run(pubs=pubs, shots=shots)
+        job = sampler.run(pubs=pubs, shots=shots, cuStateVec_enable=True)
         result = job.result()
 
         return result
@@ -166,9 +164,9 @@ class CuStateVecExecutor(BaseExecutor):
 
         # Run estimator on GPU
         if precision is not None:
-            job = estimator.run(pubs=pubs, precision=precision)
+            job = estimator.run(pubs=pubs, precision=precision, cuStateVec_enable=True)
         else:
-            job = estimator.run(pubs=pubs)
+            job = estimator.run(pubs=pubs, cuStateVec_enable=True)
 
         result = job.result()
 

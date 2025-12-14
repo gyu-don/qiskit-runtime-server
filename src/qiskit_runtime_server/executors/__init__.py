@@ -2,6 +2,12 @@
 
 from .aer import AerExecutor
 from .base import BaseExecutor
-from .custatevec import CUSTATEVEC_AVAILABLE, CuStateVecExecutor
+from .custatevec import AER_AVAILABLE, CUSTATEVEC_AVAILABLE, CuStateVecExecutor
 
-__all__ = ["CUSTATEVEC_AVAILABLE", "AerExecutor", "BaseExecutor", "CuStateVecExecutor"]
+__all__ = [
+    "AER_AVAILABLE",
+    "AerExecutor",
+    "BaseExecutor",
+    "CUSTATEVEC_AVAILABLE",
+    "CuStateVecExecutor",
+]

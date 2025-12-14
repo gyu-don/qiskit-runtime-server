@@ -1,7 +1,8 @@
 """GPU-accelerated executor using NVIDIA cuStateVec.
 
-This executor uses cuQuantum's cuStateVec library for GPU-accelerated
-statevector simulation. Requires CUDA-compatible GPU and cuQuantum installation.
+This executor uses Qiskit Aer's AerSimulator with cuStateVec backend for
+GPU-accelerated statevector simulation. Requires CUDA-compatible GPU and
+cuQuantum installation.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -13,7 +14,14 @@ if TYPE_CHECKING:
 
 from .base import BaseExecutor
 
-# Check if cuQuantum is available
+# Check if Aer and cuQuantum are available
+try:
+    from qiskit_aer import AerSimulator  # noqa: F401
+
+    AER_AVAILABLE = True
+except ImportError:
+    AER_AVAILABLE = False
+
 try:
     from cuquantum import custatevec  # noqa: F401
 
@@ -24,16 +32,18 @@ except ImportError:
 
 class CuStateVecExecutor(BaseExecutor):
     """
-    GPU-accelerated executor using NVIDIA cuStateVec.
+    GPU-accelerated executor using NVIDIA cuStateVec through Qiskit Aer.
 
-    This executor leverages cuQuantum's cuStateVec library for high-performance
-    statevector simulation on NVIDIA GPUs.
+    This executor uses AerSimulator with GPU device and cuStateVec enabled for
+    high-performance statevector simulation on NVIDIA GPUs.
 
-    Note:
-        - Requires CUDA-compatible NVIDIA GPU
-        - Requires cuQuantum Python package (cuquantum-python)
-        - Does not use noise models (statevector simulation)
-        - Does not reference backend topology (client handles transpilation)
+    Design notes:
+    - Uses AerSimulator with device='GPU' and cuStateVec_enable=True
+    - Requires CUDA-compatible NVIDIA GPU
+    - Requires Qiskit Aer and cuQuantum Python package (cuquantum-python)
+    - No noise model: statevector simulator doesn't support realistic noise
+    - No topology constraints: assumes circuits are pre-transpiled by client
+    - backend_name parameter is accepted but not used (reserved for future)
     """
 
     def __init__(
@@ -41,19 +51,24 @@ class CuStateVecExecutor(BaseExecutor):
         device_id: int = 0,
         shots: int = 1024,
         seed_simulator: int | None = None,
+        max_parallel_threads: int = 0,
     ):
         """
-        Initialize the GPU executor.
+        Initialize CuStateVecExecutor.
 
         Args:
             device_id: CUDA device ID to use (default: 0).
-            shots: Default number of shots for sampling (default: 1024).
-            seed_simulator: Random seed for reproducibility (default: None).
+            shots: Default number of shots for sampling when not specified in PUB
+                   or options. Individual PUBs can override this.
+            seed_simulator: Random seed for reproducible results.
+            max_parallel_threads: Maximum number of parallel threads (0 = auto).
 
         Raises:
-            ImportError: If cuQuantum is not installed.
-            RuntimeError: If no compatible GPU is found.
+            ImportError: If Qiskit Aer or cuQuantum is not installed.
         """
+        if not AER_AVAILABLE:
+            raise ImportError("Qiskit Aer is not installed. Install with: pip install qiskit-aer")
+
         if not CUSTATEVEC_AVAILABLE:
             raise ImportError(
                 "cuQuantum is not installed. Install with: pip install cuquantum-python"
@@ -62,28 +77,40 @@ class CuStateVecExecutor(BaseExecutor):
         self.device_id = device_id
         self.shots = shots
         self.seed_simulator = seed_simulator
-
-        # Verify GPU availability (stub - not implemented)
-        self._verify_gpu()
-
-    def _verify_gpu(self) -> None:
-        """
-        Verify that a compatible GPU is available.
-
-        Raises:
-            RuntimeError: If no compatible GPU is found.
-        """
-        # TODO: Implement GPU verification
-        # - Check CUDA availability
-        # - Check GPU device count
-        # - Verify device_id is valid
-        # - Check cuQuantum compatibility
-        pass
+        self.max_parallel_threads = max_parallel_threads
 
     @property
     def name(self) -> str:
-        """Return the executor name."""
+        """Return executor name."""
         return "custatevec"
+
+    def _create_simulator(self) -> Any:
+        """
+        Create AerSimulator instance with GPU and cuStateVec enabled.
+
+        Returns:
+            AerSimulator: Configured GPU simulator instance with cuStateVec.
+        """
+        from qiskit_aer import AerSimulator
+
+        options: dict[str, Any] = {
+            "method": "statevector",
+            "device": "GPU",
+            "cuStateVec_enable": True,
+        }
+
+        if self.seed_simulator is not None:
+            options["seed_simulator"] = self.seed_simulator
+
+        if self.max_parallel_threads > 0:
+            options["max_parallel_threads"] = self.max_parallel_threads
+
+        # Set CUDA device ID if specified
+        if self.device_id > 0:
+            options["device_id"] = self.device_id
+
+        simulator = AerSimulator(**options)
+        return simulator
 
     def execute_sampler(
         self,
@@ -92,25 +119,34 @@ class CuStateVecExecutor(BaseExecutor):
         backend_name: str,
     ) -> Any:
         """
-        Execute sampler primitive using GPU.
+        Execute sampler primitive using GPU-accelerated AerSimulator with cuStateVec.
 
         Args:
-            pubs: Iterable of primitive unified blocs (PUBs).
-            options: Execution options (e.g., default_shots, seed).
-            backend_name: Backend metadata name (reserved for future use).
+            pubs: List of primitive unified blocs (PUBs). Each PUB can be:
+                  - QuantumCircuit
+                  - (circuit,)
+                  - (circuit, parameter_values)
+                  - (circuit, parameter_values, shots)
+            options: Execution options. "default_shots" applies to PUBs without
+                     explicit shots. If not provided, uses self.shots.
+            backend_name: Backend metadata name (currently unused).
 
         Returns:
             PrimitiveResult: Sampler execution result.
-
-        Raises:
-            NotImplementedError: This is a stub implementation.
         """
-        # TODO: Implement GPU sampler execution
-        # - Convert circuits to GPU-compatible format
-        # - Execute on GPU using cuStateVec
-        # - Sample measurement outcomes
-        # - Return PrimitiveResult
-        raise NotImplementedError("CuStateVecExecutor.execute_sampler is not implemented yet")
+        from qiskit.primitives import BackendSamplerV2
+
+        simulator = self._create_simulator()
+        sampler = BackendSamplerV2(backend=simulator)
+
+        # Extract shots from options, fallback to instance default
+        shots = options.get("default_shots", self.shots)
+
+        # Run sampler on GPU
+        job = sampler.run(pubs=pubs, shots=shots)
+        result = job.result()
+
+        return result
 
     def execute_estimator(
         self,
@@ -119,22 +155,33 @@ class CuStateVecExecutor(BaseExecutor):
         backend_name: str,
     ) -> Any:
         """
-        Execute estimator primitive using GPU.
+        Execute estimator primitive using GPU-accelerated AerSimulator with cuStateVec.
 
         Args:
-            pubs: Iterable of primitive unified blocs (PUBs).
-            options: Execution options (e.g., default_precision, seed).
-            backend_name: Backend metadata name (reserved for future use).
+            pubs: Iterable of primitive unified blocs (PUBs). Each PUB can be:
+                  - (circuit, observables)
+                  - (circuit, observables, parameter_values)
+                  - (circuit, observables, parameter_values, precision)
+            options: Execution options (e.g., default_precision).
+            backend_name: Backend metadata name (currently unused).
 
         Returns:
             PrimitiveResult: Estimator execution result.
-
-        Raises:
-            NotImplementedError: This is a stub implementation.
         """
-        # TODO: Implement GPU estimator execution
-        # - Convert circuits and observables to GPU format
-        # - Execute on GPU using cuStateVec
-        # - Compute expectation values
-        # - Return PrimitiveResult
-        raise NotImplementedError("CuStateVecExecutor.execute_estimator is not implemented yet")
+        from qiskit.primitives import BackendEstimatorV2
+
+        simulator = self._create_simulator()
+        estimator = BackendEstimatorV2(backend=simulator)
+
+        # Extract precision from options if provided
+        precision = options.get("default_precision")
+
+        # Run estimator on GPU
+        if precision is not None:
+            job = estimator.run(pubs=pubs, precision=precision)
+        else:
+            job = estimator.run(pubs=pubs)
+
+        result = job.result()
+
+        return result

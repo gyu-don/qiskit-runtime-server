@@ -79,15 +79,14 @@ class CuStateVecExecutor(BaseExecutor):
 
     def _create_simulator(self) -> AerSimulator:
         """
-        Create AerSimulator instance with GPU and cuStateVec enabled.
+        Create AerSimulator instance with GPU device.
 
         Returns:
-            AerSimulator: Configured GPU simulator instance with cuStateVec.
+            AerSimulator: Configured GPU simulator instance.
         """
         options: dict[str, Any] = {
             "method": "statevector",
             "device": "GPU",
-            "cuStateVec_enable": True,
         }
 
         if self.seed_simulator is not None:
@@ -100,7 +99,10 @@ class CuStateVecExecutor(BaseExecutor):
         if self.device_id > 0:
             options["device_id"] = self.device_id
 
-        return AerSimulator(**options)
+        simulator = AerSimulator(**options)
+        # Enable cuStateVec for GPU execution
+        simulator.set_options(cuStateVec_enable=True)
+        return simulator
 
     def execute_sampler(
         self,

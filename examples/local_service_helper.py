@@ -29,7 +29,10 @@ from contextlib import contextmanager
 from typing import Any
 from unittest.mock import patch
 
+from qiskit import qpy
 from qiskit_ibm_runtime import QiskitRuntimeService
+
+COMPATIBLE_QPY_VERSION = 13
 
 
 def _is_local_or_custom_server(url: str) -> bool:
@@ -161,10 +164,16 @@ def local_service_connection(
         return f"{url}/v1"
 
     # Apply patches
+    # Note: We need to patch both qpy.QPY_VERSION and the imported QISKIT_QPY_VERSION
+    # in qiskit_ibm_runtime.utils.json, since it imports the value at module load time
+    from qiskit_ibm_runtime.utils import json as runtime_json
+
     with (
         patch.object(CloudAccount, "list_instances", patched_list_instances),
         patch.object(CloudAuth, "__init__", patched_cloudauth_init),
         patch.object(CloudAuth, "get_headers", patched_get_headers),
+        patch.object(qpy, "QPY_VERSION", COMPATIBLE_QPY_VERSION),
+        patch.object(runtime_json, "QISKIT_QPY_VERSION", COMPATIBLE_QPY_VERSION),
     ):
         # Create service with custom URL resolver
         service = QiskitRuntimeService(
@@ -258,6 +267,14 @@ def create_local_service(
 
     CloudAuth.__init__ = patched_cloudauth_init
     CloudAuth.get_headers = patched_get_headers
+
+    # Monkey-patch QPY_VERSION to compatible version
+    # Note: We need to patch both qpy.QPY_VERSION and the imported QISKIT_QPY_VERSION
+    # in qiskit_ibm_runtime.utils.json, since it imports the value at module load time
+    from qiskit_ibm_runtime.utils import json as runtime_json
+
+    qpy.QPY_VERSION = COMPATIBLE_QPY_VERSION
+    runtime_json.QISKIT_QPY_VERSION = COMPATIBLE_QPY_VERSION
 
     # Custom URL resolver
     def mock_url_resolver(_base_url, _instance, _private_endpoint=False, _region=None) -> str:

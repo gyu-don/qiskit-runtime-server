@@ -1,10 +1,12 @@
 """Tests for JobManager."""
 
+import json
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from qiskit import QuantumCircuit
+from qiskit_ibm_runtime.utils import RuntimeEncoder
 
 from qiskit_runtime_server.executors.aer import AerExecutor
 from qiskit_runtime_server.managers import JobManager
@@ -12,6 +14,13 @@ from qiskit_runtime_server.models import JobInfo, JobStatus
 
 if TYPE_CHECKING:
     from qiskit_runtime_server.executors.base import BaseExecutor
+
+
+def serialize_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Helper to serialize params using RuntimeEncoder (like the real client does)."""
+    json_str = json.dumps(params, cls=RuntimeEncoder)
+    result: dict[str, Any] = json.loads(json_str)
+    return result
 
 
 class TestJobManagerQueue:
@@ -29,11 +38,11 @@ class TestJobManagerQueue:
         circuit.cx(0, 1)
         circuit.measure_all()
 
-        # Create job
+        # Create job (serialize params like the real client)
         job_id = manager.create_job(
             program_id="sampler",
             backend_name="fake_manila@aer",
-            params={"pubs": [(circuit, None, 1024)]},
+            params=serialize_params({"pubs": [(circuit, None, 1024)]}),
             options={},
         )
 
@@ -79,7 +88,12 @@ class TestJobManagerQueue:
 
         # Submit multiple jobs with higher shot count
         job_ids = [
-            manager.create_job("sampler", "fake_manila@aer", {"pubs": [(circuit, None, 4096)]}, {})
+            manager.create_job(
+                "sampler",
+                "fake_manila@aer",
+                serialize_params({"pubs": [(circuit, None, 4096)]}),
+                {},
+            )
             for _ in range(5)
         ]
 
@@ -136,7 +150,7 @@ class TestJobManagerQueue:
             manager.create_job(
                 program_id="sampler",
                 backend_name="invalid_backend",
-                params={"pubs": [(circuit,)]},
+                params=serialize_params({"pubs": [(circuit,)]}),
                 options={},
             )
 
@@ -145,7 +159,7 @@ class TestJobManagerQueue:
             manager.create_job(
                 program_id="sampler",
                 backend_name="fake_manila@unknown",
-                params={"pubs": [(circuit,)]},
+                params=serialize_params({"pubs": [(circuit,)]}),
                 options={},
             )
 
@@ -162,7 +176,12 @@ class TestJobManagerQueue:
 
         # Create multiple jobs
         job_ids = [
-            manager.create_job("sampler", "fake_manila@aer", {"pubs": [(circuit, None, 100)]}, {})
+            manager.create_job(
+                "sampler",
+                "fake_manila@aer",
+                serialize_params({"pubs": [(circuit, None, 100)]}),
+                {},
+            )
             for _ in range(2)
         ]
 
@@ -186,7 +205,7 @@ class TestJobManagerQueue:
         job_id = manager.create_job(
             program_id="invalid_program",
             backend_name="fake_manila@aer",
-            params={"pubs": [(circuit,)]},
+            params=serialize_params({"pubs": [(circuit,)]}),
             options={},
         )
 
@@ -231,7 +250,12 @@ class TestJobManagerShutdown:
 
         # Submit multiple jobs
         job_ids = [
-            manager.create_job("sampler", "fake_manila@aer", {"pubs": [(circuit, None, 1000)]}, {})
+            manager.create_job(
+                "sampler",
+                "fake_manila@aer",
+                serialize_params({"pubs": [(circuit, None, 1000)]}),
+                {},
+            )
             for _ in range(5)
         ]
 
@@ -267,7 +291,12 @@ class TestJobManagerCancellation:
 
         # Create multiple jobs with longer execution time to ensure some stay queued
         job_ids = [
-            manager.create_job("sampler", "fake_manila@aer", {"pubs": [(circuit, None, 4096)]}, {})
+            manager.create_job(
+                "sampler",
+                "fake_manila@aer",
+                serialize_params({"pubs": [(circuit, None, 4096)]}),
+                {},
+            )
             for _ in range(5)
         ]
 
@@ -296,7 +325,10 @@ class TestJobManagerCancellation:
 
         # Create a job
         job_id = manager.create_job(
-            "sampler", "fake_manila@aer", {"pubs": [(circuit, None, 4096)]}, {}
+            "sampler",
+            "fake_manila@aer",
+            serialize_params({"pubs": [(circuit, None, 4096)]}),
+            {},
         )
 
         # Wait for it to start running
@@ -326,7 +358,10 @@ class TestJobManagerCancellation:
         circuit.measure_all()
 
         job_id = manager.create_job(
-            "sampler", "fake_manila@aer", {"pubs": [(circuit, None, 100)]}, {}
+            "sampler",
+            "fake_manila@aer",
+            serialize_params({"pubs": [(circuit, None, 100)]}),
+            {},
         )
 
         # Wait for completion
@@ -389,7 +424,7 @@ class TestJobManagerEdgeCases:
             job_id=job_id,
             program_id="sampler",
             backend_name="fake_manila@nonexistent",  # Valid format, unknown executor
-            params={"pubs": [(circuit,)]},
+            params=serialize_params({"pubs": [(circuit,)]}),
             options={},
             status=JobStatus.QUEUED,
             created_at=datetime.now(UTC),

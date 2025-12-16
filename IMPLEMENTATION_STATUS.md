@@ -210,39 +210,11 @@ See [pyproject.toml](pyproject.toml) for complete dependency list.
 
 ### High Priority
 
-1. **Test and Type Checking Coverage Expansion** (1-4 hours)
-   - **Objective**: Improve product stability and code quality
-   - **Deliverables**:
-     - Make `tests/` and `app.example.py` pass ruff and mypy checks
-     - Update pre-commit hook and CI configuration to include these files in checks
-   - **Validation**:
-     - Configure pre-commit hooks to include these files
-     - Verify `uv run pre-commit run --all-files` passes without errors
-   - **Completion Criteria**:
-     - No specification or behavior changes
-     - `tests/` and `app.example.py` fully compliant with ruff and mypy
-
-2. **Extend local_service_helper.py for Custom Domains**
-   - **Current**: Works only with `localhost` and `127.0.0.1`
-   - **Target**: Support local network IPs and custom domains
-   - **Use Cases**:
-     - LAN deployment (e.g., `http://192.168.1.100:8000`)
-     - Custom domain testing (e.g., `http://quantum.local:8000`)
-   - **Implementation**: Modify URL validation in [examples/local_service_helper.py](examples/local_service_helper.py:64-74)
-
-3. **CuStateVec Executor Implementation**
+1. **CuStateVec Executor Implementation**
    - **Status**: `CuStateVecExecutor` class exists but `execute_sampler()` and `execute_estimator()` are not implemented
    - **Dependencies**: CUDA 12.x, cuQuantum Python bindings
    - **Testing**: Requires GPU hardware (NVIDIA A100/H100 recommended)
    - **Files**: [src/qiskit_runtime_server/executors/custatevec.py](src/qiskit_runtime_server/executors/custatevec.py)
-
-4. **SessionManager Implementation**
-   - **Status**: Skeleton exists, not fully functional
-   - **Features**:
-     - Session lifecycle management (create, close, cancel)
-     - Dedicated mode (sequential job execution)
-     - Batch mode (parallel job execution)
-   - **Files**: [src/qiskit_runtime_server/managers/session_manager.py](src/qiskit_runtime_server/managers/session_manager.py)
 
 ### Optional Enhancements
 

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Self-hosted IBM Qiskit Runtime compatible REST API server"
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [
     { name = "gyu-don", email = "takumi.kt@gmail.com" }
 ]
@@ -23,6 +23,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -46,6 +47,8 @@ Issues = "https://github.com/gyu-don/qiskit-runtime-server/issues"
 [project.optional-dependencies]
 custatevec = [
     "cuquantum-python>=25.11.0",
+    "cuquantum-python-cu13>=25.11.0",
+    "cuquantum>=25.11.0",
 ]
 
 [build-system]

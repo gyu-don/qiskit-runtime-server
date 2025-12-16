@@ -281,6 +281,9 @@ class JobManager:
 
         Returns:
             Deserialized parameters ready for executor
+
+        Raises:
+            Exception: If deserialization fails (propagated to caller)
         """
         # Use RuntimeDecoder to deserialize circuits and observables
         # RuntimeDecoder is used as object_hook in json.loads
@@ -291,8 +294,7 @@ class JobManager:
             return deserialized
         except Exception as e:
             logger.error("Failed to deserialize params: %s", e, exc_info=True)
-            # Fallback: return params as-is
-            return params
+            raise
 
     def get_job(self, job_id: str) -> JobInfo | None:
         """

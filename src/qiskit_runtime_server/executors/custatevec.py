@@ -1,14 +1,15 @@
 """GPU-accelerated executor using NVIDIA cuStateVec.
 
-This executor uses Qiskit Aer's AerSimulator with cuStateVec backend for
+This executor uses Qiskit Aer's StatevectorSimulator with cuStateVec backend for
 GPU-accelerated statevector simulation. Requires CUDA-compatible GPU and
 cuQuantum installation.
 """
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Any
 
 from qiskit.primitives import BackendEstimatorV2, BackendSamplerV2
-from qiskit_aer import AerSimulator
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -19,7 +20,7 @@ from .base import BaseExecutor
 
 # Check if cuQuantum is available
 try:
-    from cuquantum import custatevec  # noqa: F401
+    from cusvaer.backends import StatevectorSimulator  # type: ignore[import-not-found]
 
     CUSTATEVEC_AVAILABLE = True
 except ImportError:
@@ -30,13 +31,13 @@ class CuStateVecExecutor(BaseExecutor):
     """
     GPU-accelerated executor using NVIDIA cuStateVec through Qiskit Aer.
 
-    This executor uses AerSimulator with GPU device and cuStateVec enabled for
+    This executor uses StatevectorSimulator with GPU device and cuStateVec enabled for
     high-performance statevector simulation on NVIDIA GPUs.
 
     Design notes:
-    - Uses AerSimulator with device='GPU' and cuStateVec_enable=True
+    - Uses cusvaer StatevectorSimulator
     - Requires CUDA-compatible NVIDIA GPU
-    - Requires Qiskit Aer and cuQuantum Python package (cuquantum-python)
+    - Requires cusvaer package (cuQuantum Appliance)
     - No noise model: statevector simulator doesn't support realistic noise
     - No topology constraints: assumes circuits are pre-transpiled by client
     - backend_name parameter is accepted but not used (reserved for future)
@@ -77,17 +78,14 @@ class CuStateVecExecutor(BaseExecutor):
         """Return executor name."""
         return "custatevec"
 
-    def _create_simulator(self) -> AerSimulator:
+    def _create_simulator(self) -> StatevectorSimulator:
         """
-        Create AerSimulator instance with GPU device.
+        Create StatevectorSimulator instance with GPU device.
 
         Returns:
-            AerSimulator: Configured GPU simulator instance.
+            StatevectorSimulator: Configured GPU simulator instance.
         """
-        options: dict[str, Any] = {
-            "method": "statevector",
-            "device": "GPU",
-        }
+        options: dict[str, Any] = {}
 
         if self.seed_simulator is not None:
             options["seed_simulator"] = self.seed_simulator
@@ -99,17 +97,17 @@ class CuStateVecExecutor(BaseExecutor):
         if self.device_id > 0:
             options["device_id"] = self.device_id
 
-        simulator = AerSimulator(**options)
+        simulator = StatevectorSimulator(**options)
         return simulator
 
     def execute_sampler(
         self,
-        pubs: "Iterable[SamplerPubLike]",
+        pubs: Iterable[SamplerPubLike],
         options: dict[str, Any],
         backend_name: str,
     ) -> Any:
         """
-        Execute sampler primitive using GPU-accelerated AerSimulator with cuStateVec.
+        Execute sampler primitive using GPU-accelerated StatevectorSimulator with cuStateVec.
 
         Args:
             pubs: List of primitive unified blocs (PUBs). Each PUB can be:
@@ -131,19 +129,19 @@ class CuStateVecExecutor(BaseExecutor):
         shots = options.get("default_shots", self.shots)
 
         # Run sampler on GPU
-        job = sampler.run(pubs=pubs, shots=shots, cuStateVec_enable=True)
+        job = sampler.run(pubs=pubs, shots=shots)
         result = job.result()
 
         return result
 
     def execute_estimator(
         self,
-        pubs: "Iterable[EstimatorPubLike]",
+        pubs: Iterable[EstimatorPubLike],
         options: dict[str, Any],
         backend_name: str,
     ) -> Any:
         """
-        Execute estimator primitive using GPU-accelerated AerSimulator with cuStateVec.
+        Execute estimator primitive using GPU-accelerated StatevectorSimulator with cuStateVec.
 
         Args:
             pubs: Iterable of primitive unified blocs (PUBs). Each PUB can be:
@@ -164,9 +162,9 @@ class CuStateVecExecutor(BaseExecutor):
 
         # Run estimator on GPU
         if precision is not None:
-            job = estimator.run(pubs=pubs, precision=precision, cuStateVec_enable=True)
+            job = estimator.run(pubs=pubs, precision=precision)
         else:
-            job = estimator.run(pubs=pubs, cuStateVec_enable=True)
+            job = estimator.run(pubs=pubs)
 
         result = job.result()
 

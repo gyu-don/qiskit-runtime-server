@@ -2,8 +2,6 @@
 
 A self-hosted IBM Qiskit Runtime compatible REST API server with multi-executor support (CPU/GPU) for local quantum computing simulation and testing.
 
-**Current Status**: GPU support is not yet.
-
 ## Overview
 
 This project provides a FastAPI-based REST API server that implements the IBM Qiskit Runtime Backend API specification, enabling local simulation using Qiskit's fake backends with pluggable execution backends (CPU/GPU).
@@ -23,6 +21,8 @@ This project provides a FastAPI-based REST API server that implements the IBM Qi
 
 ### Server
 
+Qiskit Aer (CPU):
+
 ```bash
 # Install
 uv add qiskit-runtime-server
@@ -37,6 +37,23 @@ cp app.example.py app.py
 uv run uvicorn app:app --host 0.0.0.0 --port 8000
 # Server runs at http://localhost:8000
 ```
+
+Qiskit Aer (CPU) and cusvaer (cuQuantum, GPU):
+
+```bash
+# Run cuQuantum Appliance container
+# for x86_64
+docker run --rm -it --gpus all --ipc=host --network=host --ulimit memlock=-1 --ulimit stack=67108864 -v $PWD:/server nvcr.io/nvidia/cuquantum-appliance:25.11-cuda13.0.1-devel-ubuntu24.04-amd64
+# for aarch64
+docker run --rm -it --gpus all --ipc=host --network=host --ulimit memlock=-1 --ulimit stack=67108864 -v $PWD:/server nvcr.io/nvidia/cuquantum-appliance:25.11-cuda13.0.1-devel-ubuntu24.04-arm64
+
+# In the container:
+cd /server
+pip install -e .
+python -m uvicorn app:app --host 0.0.0.0 --port 8000
+# Server runs at http://localhost:8000
+```
+
 
 ### Client
 
@@ -84,10 +101,6 @@ with local_service_connection("http://localhost:8000") as service:
 > - It validates instance CRNs against IBM Cloud services
 > - The helper script patches these authentication and validation flows to work with localhost or custom domains
 > - This approach works without forking or modifying the `qiskit-ibm-runtime` package
-
-**Alternative: Direct connection (not recommended)**
-
-You can try connecting directly with `channel="local"` (deprecated since qiskit-ibm-runtime 0.15.0) or `channel="ibm_cloud"` (requires manual patching). However, these methods may not work reliably across different client library versions. **Always prefer using `local_service_helper.py`**.
 
 ## API Endpoints
 

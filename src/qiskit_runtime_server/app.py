@@ -46,7 +46,7 @@ class BackendEncoder(json.JSONEncoder):
 
 def create_app(
     executors: dict[str, BaseExecutor] | None = None,
-    statevector_config: dict[str, Any] | None = None,
+    statevector_num_qubits: int = 30,
 ) -> FastAPI:
     """
     Create FastAPI application with executor injection.
@@ -54,8 +54,8 @@ def create_app(
     Args:
         executors: Mapping of executor name to instance.
                   Defaults to {"aer": AerExecutor()}
-        statevector_config: Optional configuration for statevector backend.
-                           Defaults to {"num_qubits": 30, "enabled": True}.
+        statevector_num_qubits: Number of qubits for statevector simulator.
+                               Defaults to 30.
 
     Returns:
         FastAPI application instance
@@ -72,7 +72,7 @@ def create_app(
     # Create managers
     session_manager = SessionManager()
     job_manager = JobManager(executors=executors, session_manager=session_manager)
-    metadata_provider = BackendMetadataProvider(available_executors, statevector_config)
+    metadata_provider = BackendMetadataProvider(available_executors, statevector_num_qubits)
 
     # Lifespan context manager for startup/shutdown
     @asynccontextmanager

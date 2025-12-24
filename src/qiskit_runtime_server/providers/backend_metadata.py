@@ -27,34 +27,27 @@ class BackendMetadataProvider:
     def __init__(
         self,
         available_executors: list[str],
-        statevector_config: dict[str, Any] | None = None,
+        statevector_num_qubits: int = 30,
     ) -> None:
         """
         Initialize the backend metadata provider.
 
         Args:
             available_executors: List of executor names (e.g., ["aer", "custatevec"]).
-            statevector_config: Optional configuration for statevector backend.
-                               Defaults to {"num_qubits": 30, "enabled": True}.
+            statevector_num_qubits: Number of qubits for statevector simulator.
+                                   Defaults to 30.
         """
         self.available_executors = available_executors
         self.provider = FakeProviderForBackendV2()
+        self.statevector_num_qubits = statevector_num_qubits
 
-        # Statevector backend configuration
-        if statevector_config is None:
-            statevector_config = {"num_qubits": 30, "enabled": True}
-        self.statevector_config = statevector_config
-
-        # Create statevector backend if enabled
-        if self.statevector_config.get("enabled", True):
-            self._statevector_backend = self._create_statevector_backend()
-        else:
-            self._statevector_backend = None
+        # Create statevector backend
+        self._statevector_backend = self._create_statevector_backend()
 
     def _create_statevector_backend(self) -> GenericBackendV2:
         """Create statevector backend metadata."""
         return GenericBackendV2(
-            num_qubits=self.statevector_config.get("num_qubits", 30),
+            num_qubits=self.statevector_num_qubits,
             basis_gates=[
                 "cx",
                 "id",
@@ -78,10 +71,7 @@ class BackendMetadataProvider:
 
     def _is_statevector_backend(self, metadata_name: str) -> bool:
         """Check if backend name is a statevector backend."""
-        return (
-            self._statevector_backend is not None
-            and metadata_name in STATEVECTOR_BACKEND_NAMES
-        )
+        return metadata_name in STATEVECTOR_BACKEND_NAMES
 
     def _backend_exists(self, metadata_name: str) -> bool:
         """Check if a backend with the given metadata name exists."""
@@ -152,14 +142,11 @@ class BackendMetadataProvider:
         """
         if self._is_statevector_backend(metadata_name):
             # Return statevector backend with custom name
+            # Note: GenericBackendV2 doesn't have a good copy mechanism,
+            # so we'll just set the name directly (it's a simple attribute)
             backend = self._statevector_backend
-            if backend is not None:
-                # Create a copy to avoid modifying the original
-                # Note: GenericBackendV2 doesn't have a good copy mechanism,
-                # so we'll just set the name directly (it's a simple attribute)
-                backend._name = metadata_name
-                return backend
-            raise ValueError(f"Statevector backend '{metadata_name}' is not available")
+            backend._name = metadata_name
+            return backend
         else:
             # Return FakeProvider backend
             return self.provider.backend(metadata_name)
@@ -246,20 +233,19 @@ class BackendMetadataProvider:
                 backend_dict["backend_name"] = virtual_name
                 virtual_backends.append(backend_dict)
 
-        # 2. Add Statevector backends (if enabled)
-        if self._statevector_backend is not None:
-            for statevector_name in STATEVECTOR_BACKEND_NAMES:
-                backend = self.get_backend(statevector_name)
-                for executor_name in self.available_executors:
-                    virtual_name = f"{statevector_name}@{executor_name}"
-                    backend_dict = self._backend_to_dict(backend)
-                    backend_dict["name"] = virtual_name
-                    backend_dict["backend_name"] = virtual_name
-                    # Override description to clarify it's a statevector simulator
-                    backend_dict["description"] = (
-                        f"Statevector simulator (ideal, no noise) on {executor_name} executor"
-                    )
-                    virtual_backends.append(backend_dict)
+        # 2. Add Statevector backends
+        for statevector_name in STATEVECTOR_BACKEND_NAMES:
+            backend = self.get_backend(statevector_name)
+            for executor_name in self.available_executors:
+                virtual_name = f"{statevector_name}@{executor_name}"
+                backend_dict = self._backend_to_dict(backend)
+                backend_dict["name"] = virtual_name
+                backend_dict["backend_name"] = virtual_name
+                # Override description to clarify it's a statevector simulator
+                backend_dict["description"] = (
+                    f"Statevector simulator (ideal, no noise) on {executor_name} executor"
+                )
+                virtual_backends.append(backend_dict)
 
         return BackendsResponse(devices=virtual_backends)
 
@@ -270,7 +256,7 @@ _provider_instance: BackendMetadataProvider | None = None
 
 def get_backend_metadata_provider(
     available_executors: list[str] | None = None,
-    statevector_config: dict[str, Any] | None = None,
+    statevector_num_qubits: int = 30,
 ) -> BackendMetadataProvider:
     """
     Get or create the global BackendMetadataProvider singleton.
@@ -278,9 +264,8 @@ def get_backend_metadata_provider(
     Args:
         available_executors: List of executor names. Defaults to ["aer"].
                             Only used on first call.
-        statevector_config: Optional configuration for statevector backend.
-                           Defaults to {"num_qubits": 30, "enabled": True}.
-                           Only used on first call.
+        statevector_num_qubits: Number of qubits for statevector simulator.
+                               Defaults to 30. Only used on first call.
 
     Returns:
         BackendMetadataProvider: The global provider instance.
@@ -291,7 +276,7 @@ def get_backend_metadata_provider(
         if available_executors is None:
             available_executors = ["aer"]
         _provider_instance = BackendMetadataProvider(
-            available_executors, statevector_config
+            available_executors, statevector_num_qubits
         )
 
     return _provider_instance

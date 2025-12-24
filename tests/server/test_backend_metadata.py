@@ -138,19 +138,12 @@ class TestStatevectorBackend:
         provider = BackendMetadataProvider(available_executors=["aer"])
         assert provider._statevector_backend is not None
 
-    def test_statevector_backend_disabled(self) -> None:
-        """Test disabling statevector backend."""
-        provider = BackendMetadataProvider(
-            available_executors=["aer"],
-            statevector_config={"enabled": False},
-        )
-        assert provider._statevector_backend is None
 
     def test_statevector_backend_custom_qubits(self) -> None:
         """Test creating statevector backend with custom qubit count."""
         provider = BackendMetadataProvider(
             available_executors=["aer"],
-            statevector_config={"num_qubits": 20},
+            statevector_num_qubits=20,
         )
         backend = provider.get_backend("statevector_simulator")
         assert backend.num_qubits == 20
@@ -215,22 +208,6 @@ class TestStatevectorBackend:
         base_count = len(FakeProviderForBackendV2().backends())
         statevector_count = len(STATEVECTOR_BACKEND_NAMES)
         assert len(backend_names) == (base_count + statevector_count) * 2
-
-    def test_list_backends_statevector_disabled(self) -> None:
-        """Test that disabled statevector backends are not listed."""
-        provider = BackendMetadataProvider(
-            available_executors=["aer"],
-            statevector_config={"enabled": False},
-        )
-        response = provider.list_backends()
-        backend_names = [b["backend_name"] for b in response.devices]
-
-        # Should not include statevector backend
-        assert "statevector_simulator@aer" not in backend_names
-
-        # Count should be base_count only (no statevector)
-        base_count = len(FakeProviderForBackendV2().backends())
-        assert len(backend_names) == base_count
 
     def test_statevector_backend_has_description(self) -> None:
         """Test that statevector backend has proper description."""

@@ -4,22 +4,42 @@ This document describes the virtual backend system that allows users to configur
 
 ## Overview
 
-Two independent concerns:
+The server provides two types of backend metadata:
 
-1. **Backend Topology (Metadata)**: Defines the simulated hardware characteristics
+### 1. FakeProvider Backends (Real Hardware Topologies)
+
+**Backend Topology (Metadata)**: Defines the simulated hardware characteristics
    - Qubit count and connectivity (coupling map)
    - Noise parameters (T1, T2, gate errors, readout errors)
    - Basis gates
    - **Source**: `FakeProviderForBackendV2` (59 fake backends)
    - **Purpose**: Metadata reference for client-side transpilation
+   - **Examples**: `fake_manila`, `fake_jakarta`, `fake_kyoto`
 
-2. **Executor**: The simulation engine that runs circuits
+### 2. Statevector Backends (Ideal Simulators)
+
+**Statevector Simulators**: Topology-free ideal quantum simulation
+   - Configurable qubit count (default: 30)
+   - No coupling map constraints (fully connected)
+   - No noise (ideal simulation)
+   - Standard basis gate set
+   - **Source**: `GenericBackendV2`
+   - **Purpose**: Algorithm development and testing without hardware constraints
+   - **Backend**: `statevector_simulator`
+
+### 3. Executor
+
+The simulation engine that runs circuits:
    - `AerExecutor` (CPU) - qiskit-aer based simulation
    - `CuStateVecExecutor` (GPU) - cuQuantum cuStateVec based simulation
    - Custom implementations via `BaseExecutor`
    - **Purpose**: Circuit execution (no topology validation)
 
-**Virtual Backend Naming**: `<metadata>@<executor>` format (e.g., `fake_manila@aer`)
+**Virtual Backend Naming**: `<metadata>@<executor>` format
+
+Examples:
+- FakeProvider: `fake_manila@aer`, `fake_jakarta@custatevec`
+- Statevector: `statevector_simulator@aer`, `statevector_simulator@custatevec`
 
 ---
 
@@ -34,8 +54,9 @@ The server uses **virtual backends** with `<metadata>@<executor>` naming to prov
 │                  Virtual Backend System                      │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  Base Metadata (59 FakeProvider backends):                 │
-│    • fake_manila, fake_quantum_sim, fake_jakarta, ...       │
+│  Base Metadata:                                             │
+│    • FakeProvider (59): fake_manila, fake_jakarta, ...      │
+│    • Statevector (1): statevector_simulator                 │
 │                                                             │
 │  Executors (configurable):                                 │
 │    • aer (CPU)                                              │
@@ -45,9 +66,9 @@ The server uses **virtual backends** with `<metadata>@<executor>` naming to prov
 │  Virtual Backends (metadata × executors):                  │
 │    • fake_manila@aer                                        │
 │    • fake_manila@custatevec                                 │
-│    • fake_quantum_sim@aer                                   │
-│    • fake_quantum_sim@custatevec                            │
-│    • ... (59 × N total)                                     │
+│    • statevector_simulator@aer                              │
+│    • statevector_simulator@custatevec                       │
+│    • ... (60 × N total)                                     │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -62,7 +83,8 @@ from qiskit_runtime_server import create_app
 # Default: Aer executor only
 app = create_app()
 
-# Available backends: fake_manila@aer, fake_quantum_sim@aer, ... (59 total)
+# Available backends: 60 total (59 FakeProvider + 1 statevector)
+# fake_manila@aer, fake_jakarta@aer, ..., statevector_simulator@aer
 ```
 
 #### Multi-Executor Setup (CPU + GPU)
@@ -77,8 +99,8 @@ app = create_app(executors={
     "custatevec": CuStateVecExecutor(),
 })
 
-# Available backends: 59 × 2 = 118 virtual backends
-# fake_manila@aer, fake_manila@custatevec, fake_quantum_sim@aer, ...
+# Available backends: 60 × 2 = 120 virtual backends
+# fake_manila@aer, fake_manila@custatevec, statevector_simulator@aer, ...
 ```
 
 #### Custom Executor Setup
@@ -95,8 +117,37 @@ app = create_app(executors={
     "custom": MyCustomExecutor(),  # Your BaseExecutor subclass
 })
 
-# Available backends: fake_manila@aer, fake_manila@custom, ... (59 × 2)
+# Available backends: fake_manila@aer, fake_manila@custom, ... (60 × 2)
 ```
+
+#### Statevector Backend Configuration
+
+Configure statevector simulator backend (ideal, topology-free simulation):
+
+```python
+from qiskit_runtime_server import create_app
+
+# Default configuration (30 qubits)
+app = create_app()
+
+# Custom qubit count
+app = create_app(
+    statevector_num_qubits=20
+)
+```
+
+**Statevector Backend Features**:
+- No coupling map constraints (fully connected)
+- No noise (ideal simulation)
+- Configurable qubit count (default: 30)
+- Works with all executors
+- Backend name: `statevector_simulator@<executor>`
+
+**Use Cases**:
+- Algorithm development without hardware constraints
+- Testing circuits with arbitrary qubit counts
+- Ideal simulation for benchmarking
+- CPU vs GPU performance comparison
 
 ### Client Usage
 
@@ -114,11 +165,14 @@ service = QiskitRuntimeService(
 
 # List all available backends
 backends = service.backends()
-# Returns: ['fake_manila@aer', 'fake_manila@custatevec', ...]
+# Returns: ['fake_manila@aer', 'statevector_simulator@aer', ...]
 
-# Select backend with explicit executor
+# Select FakeProvider backend with explicit executor
 backend_cpu = service.backend("fake_manila@aer")  # CPU executor
 backend_gpu = service.backend("fake_manila@custatevec")  # GPU executor
+
+# Or select statevector backend (topology-free)
+backend_statevec = service.backend("statevector_simulator@aer")
 
 # Use CPU executor
 sampler_cpu = SamplerV2(mode=backend_cpu)
@@ -204,7 +258,8 @@ result_gpu = job_gpu.result()
 |---------------------|-----------------|----------|-------------|
 | `fake_manila@aer` | FakeManila | AerExecutor | Manila topology, CPU simulation |
 | `fake_manila@custatevec` | FakeManila | CuStateVecExecutor | Manila topology, GPU simulation |
-| `fake_quantum_sim@aer` | FakeQuantumSim | AerExecutor | QuantumSim topology, CPU |
+| `statevector_simulator@aer` | GenericBackendV2 | AerExecutor | Ideal simulator, CPU (30 qubits) |
+| `statevector_simulator@custatevec` | GenericBackendV2 | CuStateVecExecutor | Ideal simulator, GPU (30 qubits) |
 | `fake_jakarta@custom` | FakeJakarta | Custom executor | Jakarta topology, custom |
 
 ### Parsing
@@ -233,10 +288,13 @@ backend = service.backend("fake_manila@aer")
 
 ## Available Base Backends
 
-The server provides 59 base backends from `FakeProviderForBackendV2`:
+The server provides 60 base backends:
 
-### IBM Quantum System Backends (Real Hardware Topologies)
+### 1. FakeProvider Backends (59 backends)
 
+Real hardware topologies from `FakeProviderForBackendV2`:
+
+**IBM Quantum Systems** (53):
 ```
 fake_almaden, fake_armonk, fake_athens, fake_auckland, fake_belem,
 fake_boeblingen, fake_bogota, fake_brooklyn, fake_burlington, fake_cairo,
@@ -251,13 +309,20 @@ fake_sydney, fake_tenerife, fake_tokyo, fake_toronto, fake_valencia,
 fake_vigo, fake_washington, fake_yorktown
 ```
 
-### Simulators
-
+**Generic Simulators** (6):
 ```
 fake_5q, fake_7q, fake_20q, fake_27q, fake_127q, fake_quantum_sim
 ```
 
-**Total**: 59 base backends × N executors = 59N virtual backends
+### 2. Statevector Backend (1 backend)
+
+Ideal simulator from `GenericBackendV2`:
+
+```
+statevector_simulator  # 30 qubits (configurable), no topology constraints
+```
+
+**Total**: 60 base backends × N executors = 60N virtual backends
 
 ---
 

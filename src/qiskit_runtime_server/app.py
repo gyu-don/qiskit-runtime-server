@@ -46,7 +46,7 @@ class BackendEncoder(json.JSONEncoder):
 
 def create_app(
     executors: dict[str, BaseExecutor] | None = None,
-    statevector_num_qubits: int = 30,
+    statevector_num_qubits: int = 127,
 ) -> FastAPI:
     """
     Create FastAPI application with executor injection.
@@ -55,7 +55,7 @@ def create_app(
         executors: Mapping of executor name to instance.
                   Defaults to {"aer": AerExecutor()}
         statevector_num_qubits: Number of qubits for statevector simulator.
-                               Defaults to 30.
+                               Defaults to 127 (matches largest FakeProvider backend).
 
     Returns:
         FastAPI application instance

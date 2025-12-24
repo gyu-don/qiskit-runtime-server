@@ -19,7 +19,7 @@ The server provides two types of backend metadata:
 ### 2. Statevector Backends (Ideal Simulators)
 
 **Statevector Simulators**: Topology-free ideal quantum simulation
-   - Configurable qubit count (default: 30)
+   - Configurable qubit count (default: 127, matches largest FakeProvider backend)
    - No coupling map constraints (fully connected)
    - No noise (ideal simulation)
    - Standard basis gate set
@@ -127,19 +127,19 @@ Configure statevector simulator backend (ideal, topology-free simulation):
 ```python
 from qiskit_runtime_server import create_app
 
-# Default configuration (30 qubits)
+# Default configuration (127 qubits, matches largest FakeProvider backend)
 app = create_app()
 
 # Custom qubit count
 app = create_app(
-    statevector_num_qubits=20
+    statevector_num_qubits=50
 )
 ```
 
 **Statevector Backend Features**:
 - No coupling map constraints (fully connected)
 - No noise (ideal simulation)
-- Configurable qubit count (default: 30)
+- Configurable qubit count (default: 127, matches fake_127q)
 - Works with all executors
 - Backend name: `statevector_simulator@<executor>`
 
@@ -258,8 +258,8 @@ result_gpu = job_gpu.result()
 |---------------------|-----------------|----------|-------------|
 | `fake_manila@aer` | FakeManila | AerExecutor | Manila topology, CPU simulation |
 | `fake_manila@custatevec` | FakeManila | CuStateVecExecutor | Manila topology, GPU simulation |
-| `statevector_simulator@aer` | GenericBackendV2 | AerExecutor | Ideal simulator, CPU (30 qubits) |
-| `statevector_simulator@custatevec` | GenericBackendV2 | CuStateVecExecutor | Ideal simulator, GPU (30 qubits) |
+| `statevector_simulator@aer` | GenericBackendV2 | AerExecutor | Ideal simulator, CPU (127 qubits) |
+| `statevector_simulator@custatevec` | GenericBackendV2 | CuStateVecExecutor | Ideal simulator, GPU (127 qubits) |
 | `fake_jakarta@custom` | FakeJakarta | Custom executor | Jakarta topology, custom |
 
 ### Parsing
@@ -319,7 +319,7 @@ fake_5q, fake_7q, fake_20q, fake_27q, fake_127q, fake_quantum_sim
 Ideal simulator from `GenericBackendV2`:
 
 ```
-statevector_simulator  # 30 qubits (configurable), no topology constraints
+statevector_simulator  # 127 qubits (configurable), no topology constraints
 ```
 
 **Total**: 60 base backends × N executors = 60N virtual backends

@@ -27,7 +27,7 @@ class BackendMetadataProvider:
     def __init__(
         self,
         available_executors: list[str],
-        statevector_num_qubits: int = 30,
+        statevector_num_qubits: int = 127,
     ) -> None:
         """
         Initialize the backend metadata provider.
@@ -35,7 +35,7 @@ class BackendMetadataProvider:
         Args:
             available_executors: List of executor names (e.g., ["aer", "custatevec"]).
             statevector_num_qubits: Number of qubits for statevector simulator.
-                                   Defaults to 30.
+                                   Defaults to 127 (matches largest FakeProvider backend).
         """
         self.available_executors = available_executors
         self.provider = FakeProviderForBackendV2()
@@ -256,7 +256,7 @@ _provider_instance: BackendMetadataProvider | None = None
 
 def get_backend_metadata_provider(
     available_executors: list[str] | None = None,
-    statevector_num_qubits: int = 30,
+    statevector_num_qubits: int = 127,
 ) -> BackendMetadataProvider:
     """
     Get or create the global BackendMetadataProvider singleton.
@@ -265,7 +265,8 @@ def get_backend_metadata_provider(
         available_executors: List of executor names. Defaults to ["aer"].
                             Only used on first call.
         statevector_num_qubits: Number of qubits for statevector simulator.
-                               Defaults to 30. Only used on first call.
+                               Defaults to 127 (matches largest FakeProvider backend).
+                               Only used on first call.
 
     Returns:
         BackendMetadataProvider: The global provider instance.

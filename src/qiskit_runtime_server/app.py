@@ -44,13 +44,18 @@ class BackendEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
+def create_app(
+    executors: dict[str, BaseExecutor] | None = None,
+    statevector_config: dict[str, Any] | None = None,
+) -> FastAPI:
     """
     Create FastAPI application with executor injection.
 
     Args:
         executors: Mapping of executor name to instance.
                   Defaults to {"aer": AerExecutor()}
+        statevector_config: Optional configuration for statevector backend.
+                           Defaults to {"num_qubits": 30, "enabled": True}.
 
     Returns:
         FastAPI application instance
@@ -67,7 +72,7 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
     # Create managers
     session_manager = SessionManager()
     job_manager = JobManager(executors=executors, session_manager=session_manager)
-    metadata_provider = BackendMetadataProvider(available_executors)
+    metadata_provider = BackendMetadataProvider(available_executors, statevector_config)
 
     # Lifespan context manager for startup/shutdown
     @asynccontextmanager
@@ -144,8 +149,11 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
 
         metadata_name, _executor_name = parsed
 
-        # Get backend from FakeProvider
-        backend = metadata_provider.provider.backend(metadata_name)
+        # Get backend (FakeProvider or statevector)
+        try:
+            backend = metadata_provider.get_backend(metadata_name)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"Backend {backend_name} not found") from e
 
         # Return configuration dict (same format as list_backends but for single backend)
         backend_dict = metadata_provider._backend_to_dict(backend)
@@ -174,8 +182,11 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
 
         metadata_name, _executor_name = parsed
 
-        # Get backend from FakeProvider
-        backend = metadata_provider.provider.backend(metadata_name)
+        # Get backend (FakeProvider or statevector)
+        try:
+            backend = metadata_provider.get_backend(metadata_name)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"Backend {backend_name} not found") from e
 
         # Get properties from backend
         if hasattr(backend, "properties") and callable(backend.properties):
@@ -218,7 +229,7 @@ def create_app(executors: dict[str, BaseExecutor] | None = None) -> FastAPI:
 
         # Verify backend metadata exists
         try:
-            metadata_provider.provider.backend(metadata_name)
+            metadata_provider.get_backend(metadata_name)
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"Backend {backend_name} not found") from e
 

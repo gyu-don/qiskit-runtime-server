@@ -92,3 +92,32 @@ class BaseExecutor(ABC):
             BackendMetadataProvider: The global metadata provider instance.
         """
         return get_backend_metadata_provider()
+
+    def get_backend(self, backend_name: str) -> Any:
+        """
+        Get backend object by metadata name.
+
+        This helper allows executors to access backend metadata (topology,
+        calibration data) for noise modeling or validation.
+
+        Args:
+            backend_name: Backend metadata name (without executor suffix).
+                         Examples: "fake_manila", "statevector_simulator"
+
+        Returns:
+            Backend object (GenericBackendV2 or FakeProvider backend).
+
+        Raises:
+            ValueError: If backend does not exist.
+
+        Examples:
+            >>> executor = AerExecutor()
+            >>> backend = executor.get_backend("fake_manila")
+            >>> backend.num_qubits
+            5
+            >>> backend = executor.get_backend("statevector_simulator")
+            >>> backend.num_qubits
+            30
+        """
+        provider = self.get_backend_metadata_provider()
+        return provider.get_backend(backend_name)

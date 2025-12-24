@@ -307,36 +307,10 @@ with local_service_connection("http://localhost:8000") as service:
 
 ## Testing Guidelines
 
-### Test Structure
-
-```python
-# tests/server/test_backends.py
-import pytest
-from fastapi.testclient import TestClient
-from qiskit_runtime_server.app import app
-
-client = TestClient(app)
-
-@pytest.fixture
-def auth_headers():
-    return {
-        "Authorization": "Bearer test-token",
-        "Service-CRN": "crn:v1:test",
-        "IBM-API-Version": "2025-05-01"
-    }
-
-class TestListBackends:
-    def test_success(self, auth_headers):
-        response = client.get("/v1/backends", headers=auth_headers)
-        assert response.status_code == 200
-        assert "devices" in response.json()
-```
-
-### Test Categories
-
-- **Unit tests**: Test individual components in isolation
-- **Integration tests**: Test client-server interaction
-- **API tests**: Test REST endpoints with TestClient
+- **Unit tests**: Test individual components in isolation (`tests/server/`)
+- **Integration tests**: Test client-server interaction (`tests/integration/`)
+- Use `TestClient` for API endpoint testing
+- Run tests with `uv run pytest` or `uv run pytest --cov=src` for coverage
 
 ## Documentation Guide
 
@@ -349,51 +323,18 @@ This project has comprehensive documentation organized by purpose:
 - **[API_SPECIFICATION.md](docs/API_SPECIFICATION.md)**: Complete REST API reference with all endpoints, parameters, and response formats.
 - **[DEVELOPMENT.md](docs/DEVELOPMENT.md)**: Developer workflow guide (setup, testing, linting, debugging).
 
-**Prototype reference** (historical):
-- **[tmp/README.md](tmp/README.md)**: Prototype → production migration guide
-- **[tmp/design.md](tmp/design.md)**: Original implementation plan (Phase 3 complete)
-- **[tmp/executor-implementation.md](tmp/executor-implementation.md)**: Executor implementation spec
-
 ## Common Tasks
 
-### Adding a New Endpoint
-
-1. Define Pydantic models in `models.py`
-2. Add endpoint function in `app.py`
-3. Add tests in `tests/server/`
-4. Update `docs/API_SPECIFICATION.md`
-
-### Modifying Backend Provider
-
-1. Check `FakeProviderForBackendV2` API compatibility
-2. Update `backend_provider.py`
-3. Ensure serialization works with `BackendEncoder`
-4. Test with actual fake backends
+- **Adding a new endpoint**: Define Pydantic models in `models.py`, add endpoint in `app.py`, add tests, update API docs
+- **Creating a custom executor**: Extend `BaseExecutor`, implement `execute_sampler()` and `execute_estimator()` methods
+- **Modifying backend provider**: Update `providers/backend_metadata.py`, ensure compatibility with `FakeProviderForBackendV2`
 
 
 ## Troubleshooting
 
-### Common Issues
-
-**"Module not found" errors**
-```bash
-# Ensure you're using uv run
-uv run python script.py  # ✓
-python script.py          # ✗
-```
-
-**Type checking errors**
-```bash
-# Regenerate stubs if needed
-uv run mypy src --install-types
-```
-
-**Pre-commit failing**
-```bash
-# Run auto-fix
-uv run ruff format .
-uv run ruff check . --fix
-```
+- **"Module not found" errors**: Always use `uv run python script.py`, not `python script.py`
+- **Type checking errors**: Run `uv run mypy src --install-types` to regenerate stubs
+- **Pre-commit failing**: Run `uv run ruff format . && uv run ruff check . --fix`
 
 ## API Compatibility
 
@@ -418,3 +359,10 @@ This server targets IBM Qiskit Runtime Backend API version `2025-05-01`. When up
 - **Always run** `uv run pre-commit run --all-files` before committing
 - **Test with** actual qiskit-ibm-runtime client before releasing
 - **Keep** backward compatibility with older qiskit-ibm-runtime versions
+
+### Working with Temporary Files
+
+- Use `tmp/` directory for temporary files and scratch work (not `/tmp`)
+- The `tmp/` directory is **not** in `.gitignore` to allow Claude to search and access files
+- Never commit files from `tmp/` to the repository (exclude manually from commits)
+- This directory is for development/debugging purposes only

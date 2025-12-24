@@ -151,12 +151,14 @@ class BackendMetadataProvider:
             # Return FakeProvider backend
             return self.provider.backend(metadata_name)
 
-    def _backend_to_dict(self, backend: Any) -> dict[str, Any]:
+    def _backend_to_dict(self, backend: Any, metadata_name: str | None = None) -> dict[str, Any]:
         """
         Convert a backend object to a dictionary representation.
 
         Args:
             backend: Backend object (FakeProvider or GenericBackendV2).
+            metadata_name: Optional metadata name to use (e.g., "statevector_simulator").
+                          If not provided, uses backend.name.
 
         Returns:
             Dictionary with backend metadata.
@@ -164,11 +166,17 @@ class BackendMetadataProvider:
         # Check if backend has to_dict method (FakeProvider backends)
         if hasattr(backend, "to_dict") and callable(backend.to_dict):
             result: dict[str, Any] = backend.to_dict()
+            # Override name if metadata_name provided
+            if metadata_name is not None:
+                result["backend_name"] = metadata_name
+                result["name"] = metadata_name
         else:
             # GenericBackendV2 doesn't have to_dict, build manually
+            # Use metadata_name if provided, otherwise backend.name
+            name = metadata_name if metadata_name is not None else backend.name
             result = {
-                "backend_name": backend.name,
-                "name": backend.name,
+                "backend_name": name,
+                "name": name,
                 "backend_version": getattr(backend, "backend_version", "2"),
                 "n_qubits": backend.num_qubits,
                 "simulator": True,
@@ -276,9 +284,7 @@ def get_backend_metadata_provider(
     if _provider_instance is None:
         if available_executors is None:
             available_executors = ["aer"]
-        _provider_instance = BackendMetadataProvider(
-            available_executors, statevector_num_qubits
-        )
+        _provider_instance = BackendMetadataProvider(available_executors, statevector_num_qubits)
 
     return _provider_instance
 

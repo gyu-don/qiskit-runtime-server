@@ -138,7 +138,6 @@ class TestStatevectorBackend:
         provider = BackendMetadataProvider(available_executors=["aer"])
         assert provider._statevector_backend is not None
 
-
     def test_statevector_backend_custom_qubits(self) -> None:
         """Test creating statevector backend with custom qubit count."""
         provider = BackendMetadataProvider(
@@ -162,10 +161,10 @@ class TestStatevectorBackend:
         provider = BackendMetadataProvider(available_executors=["aer"])
         backend = provider.get_backend("statevector_simulator")
         assert backend is not None
-        # GenericBackendV2 has a generic name internally,
-        # but serialization uses the correct statevector name
-        backend_dict = provider._backend_to_dict(backend)
-        assert backend_dict["backend_name"] == "statevector_simulator" or backend_dict["backend_name"].startswith("generic_backend")
+        # GenericBackendV2 name is generic, but _backend_to_dict with metadata_name uses correct name
+        backend_dict = provider._backend_to_dict(backend, metadata_name="statevector_simulator")
+        assert backend_dict["backend_name"] == "statevector_simulator"
+        assert backend_dict["name"] == "statevector_simulator"
 
     def test_get_fake_backend(self) -> None:
         """Test retrieving FakeProvider backend."""
